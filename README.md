@@ -21,18 +21,22 @@ sell products* - English copy aimed at beginners.
 
 ## Copy: Gemini, and what happens when the quota runs out
 
-Gemini's **free tier is 20 requests**, and a day of content is 6 of them.
-Two things protect against running dry:
+Gemini's **free tier is 20 requests per day**, and it was measured as not
+recovering within 9 minutes of waiting - so it behaves like a daily budget,
+not a per-minute one. Three things keep the account fed:
 
-- **Backoff.** A 429 is retried with exponential backoff, and calls are
-  spaced at least 6 s apart. After 4 straight quota errors a circuit
-  breaker opens and the model is not called again that run - every failed
-  call still counts against the 20, so retrying blindly only makes it worse.
+- **One call a day.** `batch_copy()` asks for every post and reel in a
+  single request instead of six. A whole day of content costs 1 of the 20,
+  leaving the rest for retries and for anything else using the key.
+- **Backoff, then a circuit breaker.** A 429 is retried with exponential
+  backoff, calls are spaced at least 6 s apart, and after 4 straight quota
+  errors the model is not called again that run. Every failed call still
+  counts against the 20, so retrying blindly only makes it worse.
 - **Written fallback.** 24 hand-written hook/caption/script sets in the same
-  voice take over automatically. They go through the same
-  `state/seen.json` dedupe, so the account keeps posting and never repeats.
-
-Set `GEMINI_OFF=1` to skip the model on purpose and spend nothing.
+  voice take over - automatically, or on purpose with `GEMINI_OFF=1`. A
+  partial or duplicate-heavy answer from the model is topped up from the
+  same pool. Everything goes through the `state/seen.json` dedupe, so the
+  account keeps posting and never repeats.
 
 ## The three jobs, and why they are in that order
 
