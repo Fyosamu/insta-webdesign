@@ -100,8 +100,12 @@ def _extract_json(txt):
     raise CopyError("unbalanced JSON in model response")
 
 
-def ask(schema, used, extra="", model=None, tries=7):
-    """Ask Gemini for one JSON object, refusing to repeat a used hook."""
+def ask(schema, used, extra="", model=None, tries=7, expect_hook=True):
+    """Ask Gemini for one JSON object, refusing to repeat a used hook.
+
+    expect_hook=False is for wrappers (a whole day's batch) whose top level
+    has no "hook" key - the caller validates the contents itself.
+    """
     if not GEMINI_KEY:
         raise CopyError("GEMINI_KEY is not set")
     if _gemini_down[0]:
@@ -154,6 +158,13 @@ def ask(schema, used, extra="", model=None, tries=7):
             continue
 
         _note_success()
+        if not expect_hook:
+            if not obj.get("hashtags") and not (
+                    obj.get("posts") or obj.get("reels")):
+                last = "empty batch"
+                time.sleep(3)
+                continue
+            return obj
         hook = str(obj.get("hook") or obj.get("overlay") or "").strip()
         if not hook:
             last = "empty hook"
@@ -229,6 +240,81 @@ def reel_copy(used):
     except CopyError as e:
         print("  gemini unavailable, using written fallback:", e, flush=True)
         return _fallback(used, kind="reel")
+
+
+def batch_copy(used, n_posts, n_reels):
+    """All of a day's copy in ONE Gemini call.
+
+    The free tier is 20 requests per day, so asking item-by-item spends 6 of
+    them before anything else has happened. One batched call costs 1 and
+    leaves the rest for retries - and for the rest of the key's other uses.
+    Anything the model gets wrong or omits is filled in from the written
+    templates, so a partial answer still produces a full day of content.
+    """
+    out = {"posts": [], "reels": [], "source": "gemini"}
+    if n_posts <= 0 and n_reels <= 0:
+        return out
+
+    schema = (
+        '{"posts": [' + str(n_posts) + ' objects, each shaped like: '
+        + POST_SCHEMA + '], '
+        '"reels": [' + str(n_reels) + ' objects, each shaped like: '
+        + REEL_SCHEMA + ']}'
+    )
+    extra = (f"Write {n_posts} feed post(s) and {n_reels} reel(s). "
+             f"Every hook must be different from every other hook you write "
+             f"here as well as from the already-used list. Return exactly "
+             f"{n_posts} entries in posts and {n_reels} in reels.")
+    try:
+        raw = ask(schema, used, extra=extra, tries=3, expect_hook=False)
+    except CopyError as e:
+        print("  batch copy failed, using written fallback:", e, flush=True)
+        out["source"] = "fallback"
+        for kind, n in (("post", n_posts), ("reel", n_reels)):
+            for _ in range(n):
+                item = _fallback(used + [x["hook"] for x in out["posts"]]
+                                 + [x["hook"] for x in out["reels"]],
+                                 kind=kind)
+                out["posts" if kind == "post" else "reels"].append(item)
+        return out
+
+    # ask() returns the top-level object it extracted, which for a batch is
+    # the wrapper - pull the arrays out of it.
+    posts = raw.get("posts") or []
+    reels = raw.get("reels") or []
+    if not isinstance(posts, list):
+        posts = []
+    if not isinstance(reels, list):
+        reels = []
+
+    def take(arr, n, kind):
+        got = []
+        seen = {u.lower() for u in used}
+        for item in arr[:n]:
+            if not isinstance(item, dict):
+                continue
+            obj = _tidy(item)
+            h = obj["hook"].lower()
+            if not h or h in seen:
+                continue
+            seen.add(h)
+            if kind == "reel" and not obj.get("script"):
+                continue
+            obj["source"] = "gemini"
+            got.append(obj)
+        # fill any shortfall (or a rejected duplicate) from the templates
+        while len(got) < n:
+            obj = _fallback([o["hook"] for o in got] +
+                            [u for u in used if u], kind=kind)
+            if obj["hook"].lower() not in seen:
+                seen.add(obj["hook"].lower())
+                obj["source"] = "fallback"
+                got.append(obj)
+        return got
+
+    out["posts"] = take(posts, n_posts, "post")
+    out["reels"] = take(reels, n_reels, "reel")
+    return out
 
 
 # --- fallback -----------------------------------------------------------

@@ -102,12 +102,13 @@ def _caption(copy):
     return "\n\n".join(x for x in body if x)
 
 
-def make_post(i, used, *, seed, publish=True):
+def make_post(i, used, *, seed, publish=True, copy=None):
     base, pub = _dirs("posts")
     tag = f"post{i:02d}"
     print(f"\n=== POST {tag} ===", flush=True)
 
-    copy = textgen.post_copy(used)
+    if copy is None:
+        copy = textgen.post_copy(used)
     print("  hook :", copy["hook"], flush=True)
 
     topic = random.Random(seed + i).choice(TOPICS)
@@ -156,12 +157,13 @@ def make_post(i, used, *, seed, publish=True):
             "caption": _caption(copy), "res": res}
 
 
-def make_reel(i, used, *, seed, publish=True):
+def make_reel(i, used, *, seed, publish=True, copy=None):
     base, pub = _dirs("reels")
     tag = f"reel{i:02d}"
     print(f"\n=== REEL {tag} ===", flush=True)
 
-    copy = textgen.reel_copy(used)
+    if copy is None:
+        copy = textgen.reel_copy(used)
     print("  hook :", copy["hook"], flush=True)
 
     topic = random.Random(seed + 100 + i).choice(TOPICS)
@@ -282,9 +284,18 @@ def run(posts=None, reels=None, seed=None, publish=True):
 
     used = state.hooks()
 
-    for i in range(done_p + 1, max(done_p, 0) + posts + 1):
+    # One Gemini call for the whole day, not one per item - see batch_copy.
+    print("generating copy for the batch...", flush=True)
+    copies = textgen.batch_copy(used, posts, reels)
+    print(f"  copy source: {copies.get('source')} "
+          f"({len(copies['posts'])} posts, {len(copies['reels'])} reels)",
+          flush=True)
+
+    for n, i in enumerate(range(done_p + 1, max(done_p, 0) + posts + 1)):
         try:
-            r = make_post(i, used, seed=seed, publish=publish)
+            r = make_post(i, used, seed=seed, publish=publish,
+                          copy=copies["posts"][n] if n < len(copies["posts"])
+                          else None)
         except Exception as e:
             print(f"  !! post {i} error: {e}", flush=True)
             traceback.print_exc()
@@ -300,9 +311,11 @@ def run(posts=None, reels=None, seed=None, publish=True):
         else:
             results["skipped"].append(f"post{i}")
 
-    for i in range(done_r + 1, max(done_r, 0) + reels + 1):
+    for n, i in enumerate(range(done_r + 1, max(done_r, 0) + reels + 1)):
         try:
-            r = make_reel(i, used, seed=seed, publish=publish)
+            r = make_reel(i, used, seed=seed, publish=publish,
+                          copy=copies["reels"][n] if n < len(copies["reels"])
+                          else None)
         except Exception as e:
             print(f"  !! reel {i} error: {e}", flush=True)
             traceback.print_exc()
