@@ -19,6 +19,21 @@ sell products* - English copy aimed at beginners.
 | 4. publish | Instagram Graph API | behind a three-part safety gate. |
 | 5. state | `state/seen.json` | committed back so hooks are never reused. |
 
+## Copy: Gemini, and what happens when the quota runs out
+
+Gemini's **free tier is 20 requests**, and a day of content is 6 of them.
+Two things protect against running dry:
+
+- **Backoff.** A 429 is retried with exponential backoff, and calls are
+  spaced at least 6 s apart. After 4 straight quota errors a circuit
+  breaker opens and the model is not called again that run - every failed
+  call still counts against the 20, so retrying blindly only makes it worse.
+- **Written fallback.** 24 hand-written hook/caption/script sets in the same
+  voice take over automatically. They go through the same
+  `state/seen.json` dedupe, so the account keeps posting and never repeats.
+
+Set `GEMINI_OFF=1` to skip the model on purpose and spend nothing.
+
 ## The three jobs, and why they are in that order
 
 Meta's server has to be able to `GET` a media file *before* the publish
@@ -55,34 +70,75 @@ job uses, so a render can never touch Instagram by accident.
 
 `Settings -> Secrets and variables -> Actions -> New repository secret`
 
-| secret | required | where it comes from |
-| ------ | -------- | ------------------- |
-| `GEMINI_KEY` | yes | [Google AI Studio](https://aistudio.google.com/apikey) |
-| `PEXELS_KEY` | yes | [pexels.com/api](https://www.pexels.com/api/) - free |
-| `PUBLIC_BASE` | yes to publish | your GitHub Pages URL, e.g. `https://fyosamu.github.io/insta-webdesign` |
-| `IG_ACCESS_TOKEN` | yes to publish | long-lived token, see below |
-| `IG_USER_ID` | yes to publish | the Instagram user id the token belongs to |
-| `PINTEREST_TOKEN` | optional | Pinterest API v5 token |
+| secret | status | where it comes from |
+| ------ | ------ | ------------------- |
+| `GEMINI_KEY` | **set** | [Google AI Studio](https://aistudio.google.com/apikey) |
+| `PEXELS_KEY` | **set** | [pexels.com/api](https://www.pexels.com/api/) - free |
+| `PUBLIC_BASE` | **set** | `https://fyosamu.github.io/insta-webdesign` |
+| `IG_ACCESS_TOKEN` | **you must add** | long-lived token, step 2 below |
+| `IG_USER_ID` | **you must add** | the Instagram user id, step 2 below |
+| `PINTEREST_TOKEN` | optional, not needed | Pinterest API v5 token |
 
 ### 2. Instagram (the part only you can do)
 
-Automated publishing is only supported through Meta's official API. That
-requires, once, by hand:
+Automated publishing is only supported through Meta's official API. It is a
+one-time setup, but it has to be done by a human with the account in front
+of them - nothing in this repo can create the credentials for you.
 
-1. Convert the account to **Business or Creator** (Instagram app ->
-   Settings -> Account -> Switch to professional account).
-2. Create a **Facebook Page** and link it to that Instagram account.
-3. At [developers.facebook.com](https://developers.facebook.com) create an
-   app -> add the **Instagram Graph API** product.
-4. Get a **long-lived access token** with `instagram_basic`,
-   `instagram_content_publish`, `pages_read_engagement`.
-5. Get the **Instagram user id** from
-   `GET /me/accounts -> instagram_business_account`.
+**a. Prepare the account** (Instagram app on the phone)
 
-Then set `IG_ACCESS_TOKEN` and `IG_USER_ID` as secrets.
+1. Settings -> Account -> **Switch to professional account** -> Business.
+2. Create a **Facebook Page** (any page works) and link it to this IG
+   account: Settings -> Account -> **Share to other apps** -> Facebook.
 
-> Note: Meta may require **App Review** before the token can publish to a
-> real account. Until then the token works in sandbox only.
+**b. Create the app** (browser, ~10 min)
+
+1. <https://developers.facebook.com/apps> -> **Create App** -> type
+   *Business* -> give it any name -> Create.
+2. In the dashboard add the products **Instagram Graph API** and
+   **Facebook Login**.
+3. Under *Instagram Graph API -> API setup with Instagram login* click
+   **Add account** and log in as `akhob59`.
+4. In the left sidebar open **Graph API Explorer**
+   (<https://developers.facebook.com/tools/explorer>), pick your new app,
+   and add these permissions: `instagram_basic`,
+   `instagram_content_publish`, `pages_read_engagement`,
+   `pages_show_list`.
+5. **Generate access token.** This is a short-lived one (about 1 hour).
+
+**c. Turn it into a long-lived token**
+
+```bash
+curl "https://graph.facebook.com/v21.0/oauth/access_token?\
+grant_type=fb_exchange_token&client_id=APP_ID&\
+client_secret=APP_SECRET&fb_exchange_token=SHORT_TOKEN"
+```
+
+`APP_ID` / `APP_SECRET` are on the app's *Settings -> Basic* page. The
+resulting token lasts ~60 days.
+
+**d. Get the two values the pipeline needs**
+
+```bash
+# IG user id
+curl "https://graph.facebook.com/v21.0/me/accounts?\
+access_token=LONG_TOKEN"
+# -> take the page id, then:
+curl "https://graph.facebook.com/v21.0/PAGE_ID?\
+fields=instagram_business_account&access_token=LONG_TOKEN"
+```
+
+Set the result as `IG_USER_ID`, and the long token as `IG_ACCESS_TOKEN`.
+
+**e. App Review**
+
+To publish to a real account (not just a test user) Meta usually requires
+**App Review**, where you record a short screen-capture of the flow. This is
+the step that takes days to weeks, and only Meta approves it. Until then the
+token works for test users only.
+
+> The token expires after ~60 days. Re-run step (c) before then, or the
+> `publish` job will start failing with an expired-token error.
 
 ### 3. Pinterest (optional)
 
@@ -94,8 +150,14 @@ works fine without any Pinterest token.
 ### 4. Make the media reachable
 
 Meta's server must be able to `GET` the file, so `localhost` will not work.
-Easiest option: enable **GitHub Pages** on this repository serving
-`out/public`, and set `PUBLIC_BASE` accordingly.
+
+**Already done for this repo:** GitHub Pages is enabled with
+`build_type: workflow`, and `PUBLIC_BASE` is set to
+`https://fyosamu.github.io/insta-webdesign`. The `pages` job deploys
+`out/public` there before every publish.
+
+The first time the `pages` job runs, GitHub may ask you to accept the
+Pages terms on the repo's Settings -> Pages page.
 
 ---
 

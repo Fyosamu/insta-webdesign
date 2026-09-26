@@ -47,7 +47,14 @@ class CopyError(RuntimeError):
 # blindly only makes the exhaustion worse. The fallback templates take over.
 _QUOTA_STRIKES = 4
 _quota_strikes = [0]
-_gemini_down = [False]
+# GEMINI_OFF=1 skips the model entirely and uses the written templates.
+# Useful for a quick local run, or when you want a day of purely
+# hand-checked copy without spending free-tier requests.
+_gemini_down = [bool(os.environ.get("GEMINI_OFF"))]
+
+if _gemini_down[0]:
+    print("GEMINI_OFF is set - copy will come from the written templates",
+          flush=True)
 
 
 def _note_quota():
