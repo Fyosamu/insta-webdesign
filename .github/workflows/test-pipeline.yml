@@ -37,6 +37,13 @@ jobs:
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-liberation
           pip install -r requirements.txt
 
+      # Offline and free: proves the subtitle timings cannot overlap before
+      # anything spends a Gemini request or downloads stock footage.
+      - name: Subtitle tests
+        run: |
+          cd bot
+          python test_talk.py
+
       - name: Run pipeline (render only, never publishes)
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}

@@ -57,6 +57,13 @@ jobs:
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-liberation
           pip install -r requirements.txt
 
+      # Offline and free: fails fast on a subtitle timing bug before the
+      # run spends a Gemini request or downloads any footage.
+      - name: Subtitle tests
+        run: |
+          cd bot
+          python test_talk.py
+
       - name: Restore state (prevents duplicate hooks across runs)
         run: |
           mkdir -p state

@@ -278,6 +278,31 @@ def _plate_y(box_h):
     return int(round(H * 0.95 - box_h))
 
 
+def tighten(items, total, fps=FPS):
+    """Make a list of subtitle timings safe to burn in.
+
+    Never leave two plates enabled at the same instant: they are all
+    anchored to the same bottom-centre point, so an overlap draws one line
+    of text straight through the other. Each plate gets a little longer to
+    close the gaps between phrases, but is cut off one frame before the
+    next one starts - `between(t,s,e)` is inclusive at both ends, so
+    matching them exactly would still light both up on the boundary frame.
+
+    Extracted from build() so test_talk.py can assert the invariant
+    directly instead of having to render a video to find out.
+    """
+    tight = []
+    for i, (s, e, t) in enumerate(items):
+        if s >= total:
+            continue
+        e = min(e + 0.15, total)
+        if i + 1 < len(items):
+            e = min(e, items[i + 1][0] - 1.0 / fps)
+        if e > s:
+            tight.append((s, e, t))
+    return tight
+
+
 # --- assembly -------------------------------------------------------------
 def _prepare_source(sources, workdir, duration):
     """Chain the stock clips to a full-bleed 9:16 plate of `duration` seconds.
@@ -365,23 +390,7 @@ def build(script, source, out_path, *, workdir, hook=None, voice=None,
     items = subtitle_items(script, words, total)
     if not items:
         raise TalkError("no subtitle timings from the voice")
-
-    # Never leave two plates enabled at the same instant. They are all
-    # anchored to the same bottom-centre point, so an overlap draws one line
-    # of text straight through the other. Each plate gets a little longer to
-    # close the gaps between phrases, but is cut off one frame before the
-    # next one starts - `between(t,s,e)` is inclusive at both ends, so
-    # matching them exactly would still light both up on the boundary frame.
-    tight = []
-    for i, (s, e, t) in enumerate(items):
-        if s >= total:
-            continue
-        e = min(e + 0.15, total)
-        if i + 1 < len(items):
-            e = min(e, items[i + 1][0] - 1.0 / FPS)
-        if e > s:
-            tight.append((s, e, t))
-    items = tight
+    items = tighten(items, total)
     if not items:
         raise TalkError("subtitle timings collapsed to nothing")
 

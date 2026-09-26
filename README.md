@@ -236,6 +236,7 @@ bot/
   state.py         published-hook ledger
   pipeline.py      orchestrator
   make_sample.py   build one sample reel for review
+  test_talk.py     guards the subtitle timing invariants (offline)
 .github/workflows/
   daily-content.yml   3 posts + 3 reels, schedule commented out
   test-pipeline.yml   always-dry-run smoke test
