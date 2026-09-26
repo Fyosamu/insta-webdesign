@@ -364,6 +364,10 @@ def run(posts=None, reels=None, seed=None, publish=True):
     # One Gemini call for the whole day, not one per item - see batch_copy.
     print("generating copy for the batch...", flush=True)
     copies = textgen.batch_copy(used, posts, reels)
+    # recorded so the report shows whether the day came from Gemini or from
+    # the written templates - that is the first thing to check if copy reads
+    # oddly after a quota change
+    results["source"] = copies.get("source")
     print(f"  copy source: {copies.get('source')} "
           f"({len(copies['posts'])} posts, {len(copies['reels'])} reels)",
           flush=True)

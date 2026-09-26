@@ -136,7 +136,10 @@ def ask(schema, used, extra="", model=None, tries=7, expect_hook=True):
         body = json.dumps({
             "system_instruction": {"parts": [{"text": sys_prompt}]},
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 1.0, "maxOutputTokens": 2048},
+            # 3 reels at ~160 words plus 3 captions and their hashtags comes
+            # close to 2048: a truncated response is invalid JSON and would
+            # silently drop the whole day back to the written templates
+            "generationConfig": {"temperature": 1.0, "maxOutputTokens": 4096},
         }).encode()
         url = ("https://generativelanguage.googleapis.com/v1beta/models/"
                + model + ":generateContent")
