@@ -19,6 +19,20 @@ sell products* - English copy aimed at beginners.
 | 4. publish | Instagram Graph API | behind a three-part safety gate. |
 | 5. state | `state/seen.json` | committed back so hooks are never reused. |
 
+## The three jobs, and why they are in that order
+
+Meta's server has to be able to `GET` a media file *before* the publish
+container is created, and an Actions artifact is not reachable from outside.
+So `daily-content` runs:
+
+1. **`build`** - renders everything, uploads it as an artifact, commits state.
+2. **`pages`** - deploys `out/public` to GitHub Pages so the files get a
+   real `https://` URL. Only runs when `publish=yes`.
+3. **`publish`** - waits until Pages actually answers `200`, then hands the
+   URLs to the Graph API and records what went out.
+
+Skipped entirely when `publish` is anything other than `yes`.
+
 ## Safety gate
 
 Nothing is ever published unless **all** of these hold:
@@ -29,6 +43,9 @@ Nothing is ever published unless **all** of these hold:
 
 Otherwise the run is a dry run: it still makes the files and prints exactly
 what it *would* have posted. Both scheduled workflows default to `DRY_RUN=1`.
+
+`--render-only` skips the publish half altogether - that is what the build
+job uses, so a render can never touch Instagram by accident.
 
 ---
 

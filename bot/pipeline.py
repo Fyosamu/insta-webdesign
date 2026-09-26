@@ -102,7 +102,7 @@ def _caption(copy):
     return "\n\n".join(x for x in body if x)
 
 
-def make_post(i, used, *, seed):
+def make_post(i, used, *, seed, publish=True):
     base, pub = _dirs("posts")
     tag = f"post{i:02d}"
     print(f"\n=== POST {tag} ===", flush=True)
@@ -144,16 +144,19 @@ def make_post(i, used, *, seed):
                   badge=f"WEBDESIGN BASICS / {i:02d}", seed=seedv)
     print("  saved :", out_path, flush=True)
 
-    res = instagram.publish_image(f"{os.path.relpath(out_path, OUT).replace(os.sep, '/')}",
-                                  _caption(copy))
-    print("  publish:", json.dumps(res, ensure_ascii=False)[:300], flush=True)
+    rel = os.path.relpath(out_path, OUT).replace(os.sep, "/")
+    res = {"dry_run": True, "blocked_by": "render-only run"}
+    if publish:
+        res = instagram.publish_image(rel, _caption(copy))
+        print("  publish:", json.dumps(res, ensure_ascii=False)[:300], flush=True)
+        if not res.get("dry_run"):
+            state.record("post", hook=copy["hook"], file=out_path,
+                         media_id=res.get("media_id"), day=_day())
+    return {"copy": copy, "file": out_path, "rel": rel,
+            "caption": _caption(copy), "res": res}
 
-    state.record("post", hook=copy["hook"], file=out_path,
-                 media_id=res.get("media_id"))
-    return {"copy": copy, "file": out_path, "res": res}
 
-
-def make_reel(i, used, *, seed):
+def make_reel(i, used, *, seed, publish=True):
     base, pub = _dirs("reels")
     tag = f"reel{i:02d}"
     print(f"\n=== REEL {tag} ===", flush=True)
@@ -242,16 +245,20 @@ def make_reel(i, used, *, seed):
         cover_path = None
 
     rel = lambda p: os.path.relpath(p, OUT).replace(os.sep, "/") if p else None
-    res = instagram.publish_reel(rel(out_path), _caption(copy),
-                                 cover_rel=rel(cover_path))
-    print("  publish:", json.dumps(res, ensure_ascii=False)[:300], flush=True)
+    rel_video = rel(out_path)
+    res = {"dry_run": True, "blocked_by": "render-only run"}
+    if publish:
+        res = instagram.publish_reel(rel_video, _caption(copy),
+                                     cover_rel=rel(cover_path))
+        print("  publish:", json.dumps(res, ensure_ascii=False)[:300], flush=True)
+        if not res.get("dry_run"):
+            state.record("reel", hook=copy["hook"], file=out_path,
+                         media_id=res.get("media_id"), day=_day())
+    return {"copy": copy, "file": out_path, "rel": rel_video,
+            "cover": rel(cover_path), "caption": _caption(copy), "res": res}
 
-    state.record("reel", hook=copy["hook"], file=out_path,
-                 media_id=res.get("media_id"))
-    return {"copy": copy, "file": out_path, "res": res}
 
-
-def run(posts=None, reels=None, seed=None):
+def run(posts=None, reels=None, seed=None, publish=True):
     posts = DAILY_POSTS if posts is None else posts
     reels = DAILY_REELS if reels is None else reels
     seed = seed if seed is not None else int(_day().replace("-", ""))
@@ -264,17 +271,20 @@ def run(posts=None, reels=None, seed=None):
     print(f"day={day} already published: posts={done_p} reels={done_r}",
           flush=True)
 
-    results = {"day": day, "posts": [], "reels": [],
+    results = {"day": day, "publish": publish, "posts": [], "reels": [],
                "skipped": [], "errors": []}
 
-    gate = instagram.gate()
-    print("publish gate:", gate or "OPEN (will publish)", flush=True)
+    if publish:
+        gate = instagram.gate()
+        print("publish gate:", gate or "OPEN (will publish)", flush=True)
+    else:
+        print("publish: skipped (render-only)", flush=True)
 
     used = state.hooks()
 
     for i in range(done_p + 1, max(done_p, 0) + posts + 1):
         try:
-            r = make_post(i, used, seed=seed)
+            r = make_post(i, used, seed=seed, publish=publish)
         except Exception as e:
             print(f"  !! post {i} error: {e}", flush=True)
             traceback.print_exc()
@@ -283,13 +293,16 @@ def run(posts=None, reels=None, seed=None):
         if r:
             used.append(r["copy"]["hook"].lower())
             results["posts"].append({"n": i, "hook": r["copy"]["hook"],
-                                     "file": r["file"]})
+                                     "file": r["file"], "rel": r["rel"],
+                                     "caption": r["caption"],
+                                     "dry_run": r["res"].get("dry_run"),
+                                     "media_id": r["res"].get("media_id")})
         else:
             results["skipped"].append(f"post{i}")
 
     for i in range(done_r + 1, max(done_r, 0) + reels + 1):
         try:
-            r = make_reel(i, used, seed=seed)
+            r = make_reel(i, used, seed=seed, publish=publish)
         except Exception as e:
             print(f"  !! reel {i} error: {e}", flush=True)
             traceback.print_exc()
@@ -298,7 +311,11 @@ def run(posts=None, reels=None, seed=None):
         if r:
             used.append(r["copy"]["hook"].lower())
             results["reels"].append({"n": i, "hook": r["copy"]["hook"],
-                                     "file": r["file"]})
+                                     "file": r["file"], "rel": r["rel"],
+                                     "cover": r.get("cover"),
+                                     "caption": r["caption"],
+                                     "dry_run": r["res"].get("dry_run"),
+                                     "media_id": r["res"].get("media_id")})
         else:
             results["skipped"].append(f"reel{i}")
 
@@ -311,11 +328,64 @@ def run(posts=None, reels=None, seed=None):
     return results
 
 
+def publish_report(path):
+    """Second half of the split: publish an already-rendered report.
+
+    Used by the workflow after GitHub Pages is up, because Meta's fetcher
+    has to be able to GET the file *before* the container is created.
+    """
+    with open(path, encoding="utf-8") as fh:
+        results = json.load(fh)
+
+    gate = instagram.gate()
+    print("publish gate:", gate or "OPEN (will publish)", flush=True)
+
+    for item in results.get("posts", []):
+        if not item.get("rel"):
+            continue
+        res = instagram.publish_image(item["rel"], item["caption"])
+        print("  post", item["n"], json.dumps(res, ensure_ascii=False)[:300],
+              flush=True)
+        if not res.get("dry_run"):
+            state.record("post", hook=item.get("hook"), file=item.get("file"),
+                         media_id=res.get("media_id"), day=results.get("day"))
+            item["media_id"] = res.get("media_id")
+            item["dry_run"] = False
+
+    for item in results.get("reels", []):
+        if not item.get("rel"):
+            continue
+        res = instagram.publish_reel(item["rel"], item["caption"],
+                                     cover_rel=item.get("cover"))
+        print("  reel", item["n"], json.dumps(res, ensure_ascii=False)[:300],
+              flush=True)
+        if not res.get("dry_run"):
+            state.record("reel", hook=item.get("hook"), file=item.get("file"),
+                         media_id=res.get("media_id"), day=results.get("day"))
+            item["media_id"] = res.get("media_id")
+            item["dry_run"] = False
+
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(results, fh, ensure_ascii=False, indent=2)
+    return results
+
+
 if __name__ == "__main__":
     n_posts = n_reels = None
+    publish = not os.environ.get("RENDER_ONLY")
     for a in sys.argv[1:]:
         if a.startswith("--posts="):
             n_posts = int(a.split("=", 1)[1])
         elif a.startswith("--reels="):
             n_reels = int(a.split("=", 1)[1])
-    run(posts=n_posts, reels=n_reels)
+        elif a == "--publish-only":
+            import glob
+            files = sorted(glob.glob(os.path.join(OUT, "report-*.json")))
+            if not files:
+                print("no report to publish", flush=True)
+                sys.exit(1)
+            publish_report(files[-1])
+            sys.exit(0)
+        elif a == "--render-only":
+            publish = False
+    run(posts=n_posts, reels=n_reels, publish=publish)

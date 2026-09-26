@@ -37,7 +37,7 @@ jobs:
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-liberation
           pip install Pillow
 
-      - name: Run pipeline (always a dry run)
+      - name: Run pipeline (render only, never publishes)
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
           PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
@@ -48,7 +48,7 @@ jobs:
           REELS: ${{ github.event.inputs.reels || '1' }}
         run: |
           cd bot
-          python -m pipeline --posts="$POSTS" --reels="$REELS"
+          python -m pipeline --posts="$POSTS" --reels="$REELS" --render-only
 
       - name: Upload sample
         uses: actions/upload-artifact@v4

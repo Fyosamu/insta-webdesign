@@ -41,6 +41,29 @@ class CopyError(RuntimeError):
     pass
 
 
+# Circuit breaker: once Gemini has refused several times in a row with a
+# hard quota error, stop calling it for the rest of this process. Each
+# failed call still counts against the 20-request free tier, so retrying
+# blindly only makes the exhaustion worse. The fallback templates take over.
+_QUOTA_STRIKES = 4
+_quota_strikes = [0]
+_gemini_down = [False]
+
+
+def _note_quota():
+    _quota_strikes[0] += 1
+    if _quota_strikes[0] >= _QUOTA_STRIKES:
+        if not _gemini_down[0]:
+            print(f"  gemini quota exhausted "
+                  f"({_quota_strikes[0]} straight 429s) - switching to "
+                  f"written fallback for the rest of this run", flush=True)
+        _gemini_down[0] = True
+
+
+def _note_success():
+    _quota_strikes[0] = 0
+
+
 def _extract_json(txt):
     txt = txt.strip()
     txt = re.sub(r"^```[a-zA-Z]*\s*", "", txt)
@@ -70,10 +93,12 @@ def _extract_json(txt):
     raise CopyError("unbalanced JSON in model response")
 
 
-def ask(schema, used, extra="", model=None, tries=5):
+def ask(schema, used, extra="", model=None, tries=7):
     """Ask Gemini for one JSON object, refusing to repeat a used hook."""
     if not GEMINI_KEY:
         raise CopyError("GEMINI_KEY is not set")
+    if _gemini_down[0]:
+        raise CopyError("gemini circuit open (free-tier quota exhausted)")
     model = model or MODEL
     sys_prompt = BASE_RULES.format(niche=NICHE)
     if used:
@@ -99,24 +124,60 @@ def ask(schema, used, extra="", model=None, tries=5):
                 data = json.load(r)
             txt = data["candidates"][0]["content"]["parts"][0]["text"]
             obj = _extract_json(txt)
-        except (urllib.error.HTTPError, urllib.error.URLError, KeyError,
-                IndexError, ValueError, CopyError) as e:
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}: {e}"
+            # 429/503 are quota, not a bad prompt - wait it out properly
+            # instead of burning the remaining tries a few seconds apart.
+            if e.code in (429, 500, 502, 503, 504):
+                if e.code == 429:
+                    _note_quota()
+                    if _gemini_down[0]:
+                        break
+                wait = min(75, 15 * (2 ** attempt))
+                print(f"    gemini {e.code}, backing off {wait}s "
+                      f"(try {attempt + 1}/{tries})", flush=True)
+                time.sleep(wait)
+            else:
+                time.sleep(2 + attempt * 2)
+            continue
+        except (urllib.error.URLError, KeyError, IndexError, ValueError,
+                CopyError) as e:
             last = f"{type(e).__name__}: {e}"
             time.sleep(2 + attempt * 2)
             continue
 
+        _note_success()
         hook = str(obj.get("hook") or obj.get("overlay") or "").strip()
         if not hook:
             last = "empty hook"
+            time.sleep(3)
             continue
         if hook.lower() in {u.lower() for u in used}:
             last = "duplicate hook"
+            time.sleep(3)
             continue
         if not obj.get("hashtags"):
             obj["hashtags"] = _default_hashtags(hook)
+        _paced()
         return _tidy(obj)
 
     raise CopyError(f"copy generation failed after {tries} tries: {last}")
+
+
+_last_call = [0.0]
+
+
+def _paced(min_gap=6.0):
+    """Keep a floor between Gemini calls so a 6-item day never trips 429.
+
+    Free-tier limits are per-minute; spacing the calls out costs a couple of
+    minutes a day and removes the whole class of failure.
+    """
+    global _last_call
+    delta = time.time() - _last_call[0]
+    if delta < min_gap:
+        time.sleep(min_gap - delta)
+    _last_call[0] = time.time()
 
 
 def _default_hashtags(hook):
@@ -146,10 +207,279 @@ def _tidy(obj):
 
 
 def post_copy(used):
-    return ask(POST_SCHEMA, used,
-               extra="Format: an Instagram FEED POST (single image).")
+    try:
+        return ask(POST_SCHEMA, used,
+                   extra="Format: an Instagram FEED POST (single image).")
+    except CopyError as e:
+        print("  gemini unavailable, using written fallback:", e, flush=True)
+        return _fallback(used, kind="post")
 
 
 def reel_copy(used):
-    return ask(REEL_SCHEMA, used,
-               extra="Format: a 15-30s REEL with a voiceover-style script.")
+    try:
+        return ask(REEL_SCHEMA, used,
+                   extra="Format: a 15-30s REEL with a voiceover-style script.")
+    except CopyError as e:
+        print("  gemini unavailable, using written fallback:", e, flush=True)
+        return _fallback(used, kind="reel")
+
+
+# --- fallback -----------------------------------------------------------
+# Gemini's free tier is 20 requests. Six items a day plus a couple of
+# retries can eat that, and the account must not go quiet because of it.
+# These are hand-written in the same voice and are checked against
+# state/seen.json exactly like the AI copy, so they never repeat either.
+
+_TEMPLATES = [
+    ("Stop selling only in your direct messages",
+     ["Selling in chat means you reply to every buyer yourself.",
+      "A simple website lets people browse and order without you lifting a finger.",
+      "How many sales did you lose last week to slow replies?"],
+     ["Most sales start with a chat message",
+      "You cannot answer every message at once",
+      "A website replies for you all day",
+      "Buyers check your page while you sleep",
+      "One link beats a hundred replies"]),
+    ("Your shop should be open all night",
+     ["A closed shop earns nothing.",
+      "A website keeps selling at 2am, on Sunday, and while you are on holiday.",
+      "When did you last make a sale while you were asleep?"],
+     ["Your shop closes at six",
+      "But your customers do not",
+      "They keep looking after hours",
+      "A website never closes",
+      "Wake up to an order"]),
+    ("Social media is not your real shop",
+     ["One change to an algorithm and your reach disappears.",
+      "A website is a place you own completely.",
+      "When did your last post reach everyone who follows you?"],
+     ["You do not own your followers",
+      "The platform decides who sees you",
+      "An algorithm can bury you overnight",
+      "A website answers to nobody",
+      "It is yours for good"]),
+    ("People search Google before they buy from you",
+     ["Someone hears about you and types your name into Google.",
+      "If nothing comes up, they move on.",
+      "What does Google show when people search for you?"],
+     ["They heard your name",
+      "So they searched for you",
+      "No website, no result",
+      "They chose someone else",
+      "Google is the first impression"]),
+    ("Make it easy for customers to pay",
+     ["Every extra step costs you buyers.",
+      "A website lets people see the price and pay in a few taps.",
+      "How many steps does it take to buy from you right now?"],
+     ["A long checkout loses people",
+      "They will not fill in ten forms",
+      "See the price, tap pay, done",
+      "Easy buying means more sales",
+      "Count your checkout steps"]),
+    ("Put all your products in one clear place",
+     ["Scattered posts make people hunt for prices.",
+      "One page shows everything in order.",
+      "Can a new customer find your full range in under a minute?"],
+     ["Your products are scattered",
+      "Across posts, stories and messages",
+      "People give up looking",
+      "One page shows everything",
+      "Find it in under a minute"]),
+    ("Your website works even when you stop",
+     ["Ads stop the moment you stop paying.",
+      "A good page keeps bringing people in for years.",
+      "Which one still works when your budget runs out?"],
+     ["Ads stop when the money stops",
+      "Your website keeps going",
+      "Old pages still bring visitors",
+      "It works while you rest",
+      "The cheapest employee you hire"]),
+    ("A website makes a small business look big",
+     ["Customers judge you in seconds, often before they message you.",
+      "A clean page says you are serious.",
+      "What does yours say in the first three seconds?"],
+     ["Small shops get judged fast",
+      "Before anyone messages you",
+      "A clean page says serious",
+      "A messy one says the opposite",
+      "You have three seconds"]),
+    ("Owning a website beats renting an audience",
+     ["Followers live on a platform you do not control.",
+      "Your own site is yours, and so is everyone who visits it.",
+      "Where do your customers actually belong to you?"],
+     ["You are renting your audience",
+      "The platform can take it back",
+      "Your own page is different",
+      "Visitors belong to you",
+      "Build on ground you own"]),
+    ("Customers compare you before they message you",
+     ["People look at two or three options first and pick quietly.",
+      "If you are not easy to compare, you are not chosen.",
+      "Who wins that silent comparison?"],
+     ["They compare before they ask",
+      "Three options, one winner",
+      "The choice is made quietly",
+      "Nobody announces their decision",
+      "Be the easy one to pick"]),
+    ("Your website is the best place to sell",
+     ["Marketplaces charge you for every sale and show your rivals next to you.",
+      "On your own page you keep the margin.",
+      "How much are fees costing you each month?"],
+     ["Fees on every single sale",
+      "And your rivals on the same page",
+      "Your own page is different",
+      "Keep the margin you earned",
+      "Add up this month's fees"]),
+    ("Stop explaining the same things every day",
+     ["The same five questions fill your inbox every week.",
+      "Put the answers on one page and let it do the talking.",
+      "What do you answer most often?"],
+     ["The same questions weekly",
+      "Answered by you every time",
+      "Put the answers on a page",
+      "Let it talk while you work",
+      "What do you reply most?"]),
+    ("A website brings local customers too",
+     ["People search for things near them every day.",
+      "Without a page you are invisible in that moment.",
+      "Have you searched for your own service from your phone?"],
+     ["People search near them daily",
+      "Right when they are ready",
+      "No page means invisible",
+      "Be there at that moment",
+      "Search your own service now"]),
+    ("Your first impression happens on your website",
+     ["Someone hears your name and looks you up.",
+      "What they find decides everything before you speak to them.",
+      "What will they find about you?"],
+     ["They hear your name",
+      "Then they look you up",
+      "Before you ever speak",
+      "That page decides it",
+      "What will they find?"]),
+    ("Word of mouth needs somewhere to land",
+     ["A friend recommends you and the first thing that happens is a search.",
+      "If there is no page, the recommendation fades.",
+      "Where does your next referral go?"],
+     ["Someone recommends you",
+      "They search you right after",
+      "No page and it fades",
+      "A referral needs a landing place",
+      "Where does yours go?"]),
+    ("You lose money without a real website",
+     ["Every day without a page is a day buyers cannot find you.",
+      "They cannot check your prices, and they cannot pay you.",
+      "What did yesterday cost you?"],
+     ["Another day without a page",
+      "Buyers cannot find you",
+      "They cannot check prices",
+      "They cannot pay you",
+      "What did yesterday cost?"]),
+    ("Your competitors already have one",
+     ["While you think about it, they are being found and chosen.",
+      "A page takes an afternoon, not a month.",
+      "How long will you keep letting them go first?"],
+     ["They are being found now",
+      "And chosen while you wait",
+      "It takes an afternoon",
+      "Not a whole month",
+      "How long will you wait?"]),
+    ("One link beats ten different profiles",
+     ["Ten platforms, ten bios, ten places to update.",
+      "One link does the whole job.",
+      "Which one do you send someone who wants to buy?"],
+     ["Ten profiles to keep updated",
+      "Ten bios, ten links",
+      "One page does it all",
+      "One link in your bio",
+      "What do you actually send?"]),
+    ("A Facebook page is not a website",
+     ["You do not own it, you cannot design it freely, and reach keeps dropping.",
+      "Treat a page as a doorway, not a home.",
+      "What are you building on?"],
+     ["A page is not a home",
+      "You do not own it",
+      "Reach keeps dropping",
+      "Treat it as a doorway",
+      "What are you building on?"]),
+    ("Your website is open even when you are not",
+     ["You are busy serving the person in front of you.",
+      "The page keeps selling to everyone else.",
+      "Who is serving your other customers right now?"],
+     ["You are busy in the shop",
+      "The page keeps selling",
+      "To everyone who is not here",
+      "It never takes a break",
+      "Who is serving them now?"]),
+    ("Show the price, lose fewer buyers",
+     ["Hidden prices make people ask, and many never ask at all.",
+      "Listing them openly filters for serious buyers.",
+      "How many left without ever contacting you?"],
+     ["Hidden prices cost buyers",
+      "They will not always ask",
+      "Many just leave quietly",
+      "Show it openly instead",
+      "How many never contacted you?"]),
+    ("Turn visitors into buyers with a simple page",
+     ["A clear headline, real photos, one button to buy. That is most of it.",
+      "Anything more is friction.",
+      "How many buttons does your visitor see before they can pay?"],
+     ["A clear headline",
+      "Real photos of your work",
+      "One button to buy",
+      "That is most of it",
+      "How many buttons do they see?"]),
+    ("Slow websites lose small businesses",
+     ["People leave a page that takes too long, and they leave without telling you.",
+      "Speed is a sales feature.",
+      "How many seconds does yours take to load?"],
+     ["Slow pages lose people",
+      "They leave without saying",
+      "You never see the bounce",
+      "Speed is a sales feature",
+      "How many seconds do you take?"]),
+    ("Your customers already expect a website",
+     ["People assume a real business has a page, the same way they assume it has a phone.",
+      "Missing one now looks like a warning sign.",
+      "What does your absence say about you?"],
+     ["They expect a page",
+      "Like they expect a phone number",
+      "Not having one looks odd",
+      "It reads as a warning sign",
+      "What does your absence say?"]),
+]
+
+
+_HASHTAGS = ["#webdesign", "#websitetips", "#smallbusiness",
+             "#onlinebusiness", "#digitalmarketing", "#websiteformbusiness",
+             "#sellonline", "#ecommercetips", "#contentmarketing",
+             "#entrepreneurtips", "#smallbiz", "#buildabrand"]
+
+
+_FALLBACK_CURSOR = [0]
+
+
+def _fallback(used, kind="post"):
+    taken = {u.lower() for u in used}
+    free = [t for t in _TEMPLATES if t[0].lower() not in taken]
+    if not free:
+        # everything has been used: vary the wording rather than repeat it
+        free = [(f"{t[0]} - part {i + 2}", t[1], t[2])
+                for i, t in enumerate(_TEMPLATES)]
+
+    # rotate so a fresh run does not always open with the same template
+    idx = (len(used) + _FALLBACK_CURSOR[0]) % len(free)
+    _FALLBACK_CURSOR[0] += 1
+    hook, sentences, lines = free[idx]
+
+    caption = " ".join(sentences)
+    obj = {
+        "hook": hook,
+        "overlay": " ".join(hook.split()[:4]),
+        "caption": caption,
+        "hashtags": list(_HASHTAGS),
+        "source": "fallback",
+    }
+    if kind == "reel":
+        obj["script"] = list(lines)
+    return _tidy(obj)

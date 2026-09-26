@@ -4,3 +4,4 @@ state/seen.json.tmp
 out/
 bot/.key
 *.secret.json
+gh-sample/
