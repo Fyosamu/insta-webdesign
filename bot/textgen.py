@@ -47,6 +47,9 @@ class CopyError(RuntimeError):
 # blindly only makes the exhaustion worse. The fallback templates take over.
 _QUOTA_STRIKES = 4
 _quota_strikes = [0]
+# which model to try first next time - persists across calls so a run that
+# found a working model keeps using it
+_model_cursor = [0]
 # GEMINI_OFF=1 skips the model entirely and uses the written templates.
 # Useful for a quick local run, or when you want a day of purely
 # hand-checked copy without spending free-tier requests.
@@ -110,7 +113,14 @@ def ask(schema, used, extra="", model=None, tries=7, expect_hook=True):
         raise CopyError("GEMINI_KEY is not set")
     if _gemini_down[0]:
         raise CopyError("gemini circuit open (free-tier quota exhausted)")
-    model = model or MODEL
+    # Free-tier quota is per model, not per key: gemini-3.8-flash can be
+    # empty while the lite models still answer. Rotate through them before
+    # ever sitting in a backoff wait.
+    if model:
+        models = [model]
+    else:
+        models = [m for m in dict.fromkeys(
+            [MODEL, "gemini-flash-lite-latest", "gemini-3.1-flash-lite"])]
     sys_prompt = BASE_RULES.format(niche=NICHE)
     if used:
         sys_prompt += "\nAlready used (never reuse, not even close):\n- " + "\n- ".join(sorted(used)[-400:])
@@ -120,7 +130,9 @@ def ask(schema, used, extra="", model=None, tries=7, expect_hook=True):
     prompt = ("Return one JSON object matching exactly this shape:\n" + schema)
 
     last = ""
+    mi = _model_cursor[0] % len(models)
     for attempt in range(tries):
+        model = models[mi % len(models)]
         body = json.dumps({
             "system_instruction": {"parts": [{"text": sys_prompt}]},
             "contents": [{"parts": [{"text": prompt}]}],
@@ -136,14 +148,28 @@ def ask(schema, used, extra="", model=None, tries=7, expect_hook=True):
             txt = data["candidates"][0]["content"]["parts"][0]["text"]
             obj = _extract_json(txt)
         except urllib.error.HTTPError as e:
-            last = f"HTTP {e.code}: {e}"
-            # 429/503 are quota, not a bad prompt - wait it out properly
-            # instead of burning the remaining tries a few seconds apart.
+            last = f"HTTP {e.code} on {model}: {e}"
+            if e.code in (404, 400):
+                # this model name does not exist for this key - drop it
+                if len(models) > 1:
+                    models.pop(mi % len(models))
+                    print(f"    {model} unavailable, trying next model",
+                          flush=True)
+                    continue
+            # 429/503 are quota, not a bad prompt: try another model first,
+            # and only then wait it out.
             if e.code in (429, 500, 502, 503, 504):
-                if e.code == 429:
+                tried_all = len(models) == 1
+                if e.code == 429 and tried_all:
                     _note_quota()
                     if _gemini_down[0]:
                         break
+                if not tried_all:
+                    mi += 1
+                    _model_cursor[0] = mi
+                    print(f"    {model} -> {e.code}, switching to "
+                          f"{models[mi % len(models)]}", flush=True)
+                    continue
                 wait = min(75, 15 * (2 ** attempt))
                 print(f"    gemini {e.code}, backing off {wait}s "
                       f"(try {attempt + 1}/{tries})", flush=True)
@@ -158,6 +184,7 @@ def ask(schema, used, extra="", model=None, tries=7, expect_hook=True):
             continue
 
         _note_success()
+        _model_cursor[0] = mi
         if not expect_hook:
             if not obj.get("hashtags") and not (
                     obj.get("posts") or obj.get("reels")):

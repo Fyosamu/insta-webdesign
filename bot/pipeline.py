@@ -326,6 +326,7 @@ def run(posts=None, reels=None, seed=None, publish=True):
             results["reels"].append({"n": i, "hook": r["copy"]["hook"],
                                      "file": r["file"], "rel": r["rel"],
                                      "cover": r.get("cover"),
+                                     "script": r["copy"].get("script") or [],
                                      "caption": r["caption"],
                                      "dry_run": r["res"].get("dry_run"),
                                      "media_id": r["res"].get("media_id")})
