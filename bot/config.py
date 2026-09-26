@@ -46,6 +46,9 @@ PUBLIC_BASE = os.environ.get("PUBLIC_BASE", "").rstrip("/")
 
 DAILY_POSTS = _int("DAILY_POSTS", 3)
 DAILY_REELS = _int("DAILY_REELS", 3)
+# Length of the SILENT CARD reel (reel.py), the fallback path taken when
+# edge-tts or the network is down. The normal voice reel ignores this and
+# runs exactly as long as its narration, which is capped at 59s in talk.py.
 REEL_SECONDS = _int("REEL_SECONDS", 20)
 
 # Safety gate. Generation always runs; publishing only happens when APPROVED=1
