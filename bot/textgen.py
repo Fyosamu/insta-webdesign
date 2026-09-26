@@ -186,9 +186,10 @@ def ask(schema, used, extra="", model=None, tries=7, expect_hook=True):
         _note_success()
         _model_cursor[0] = mi
         if not expect_hook:
-            if not obj.get("hashtags") and not (
-                    obj.get("posts") or obj.get("reels")):
-                last = "empty batch"
+            # a wrapper object: the caller validates its contents, so just
+            # make sure the model actually returned something to work with
+            if not isinstance(obj, dict) or not obj:
+                last = "empty object"
                 time.sleep(3)
                 continue
             return obj
