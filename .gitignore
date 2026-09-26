@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+state/seen.json.tmp
+out/
+bot/.key
+*.secret.json

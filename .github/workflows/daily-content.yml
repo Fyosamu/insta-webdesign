@@ -1,0 +1,111 @@
+# Daily content: 3 feed posts + 3 reels on the Instagram account.
+#
+# THE SCHEDULE IS COMMENTED OUT ON PURPOSE - nothing runs until you approve
+# it, exactly like the YouTube pipeline it was modelled on. Until then the
+# only way to run this is the manual "Run workflow" button, and even then the
+# in-code gate (DRY_RUN / APPROVED) keeps it from publishing.
+name: daily-content
+
+on:
+  workflow_dispatch:
+    inputs:
+      posts:
+        description: "feed posts to make"
+        required: false
+        default: "3"
+      reels:
+        description: "reels to make"
+        required: false
+        default: "3"
+      publish:
+        description: "set to 'yes' to actually publish (needs secrets + approval)"
+        required: false
+        default: "no"
+  # schedule:                   # enable ONLY after you say go
+  #   - cron: "30 8 * * *"      # 08:30 UTC = check your own timezone first
+
+permissions:
+  contents: write              # commit state/seen.json back after a run
+
+concurrency:
+  group: daily-content
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ffmpeg + Pillow
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-liberation
+          python -m pip install --upgrade pip
+          pip install Pillow
+
+      - name: Restore state (prevents duplicate hooks across runs)
+        run: |
+          mkdir -p state
+          if [ ! -f state/seen.json ]; then echo '{"hooks":[],"published":[],"counters":{"post":0,"reel":0},"dates":{}}' > state/seen.json; fi
+
+      # Secrets live only in the repository settings, never in the code:
+      #   GEMINI_KEY, PEXELS_KEY, IG_ACCESS_TOKEN, IG_USER_ID, PUBLIC_BASE,
+      #   PINTEREST_TOKEN (optional)
+      - name: Generate + publish
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
+          PINTEREST_TOKEN: ${{ secrets.PINTEREST_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}
+          POSTS: ${{ github.event.inputs.posts || '3' }}
+          REELS: ${{ github.event.inputs.reels || '3' }}
+          # publish=only flips both gates open; anything else stays a dry run
+          DRY_RUN: ${{ (github.event.inputs.publish == 'yes') && '0' || '1' }}
+          APPROVED: ${{ (github.event.inputs.publish == 'yes') && '1' || '0' }}
+        run: |
+          cd bot
+          python -m pipeline --posts="$POSTS" --reels="$REELS"
+
+      - name: Upload deliverables (images, reels, report)
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-${{ github.run_number }}
+          path: |
+            out/public/
+            out/report-*.json
+          retention-days: 14
+
+      - name: Commit state so hooks are never repeated
+        run: |
+          git config user.name "daily-content-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f state/seen.json || true
+          git diff --cached --quiet || git commit -m "state: record published hooks [skip ci]"
+          git push || true
+
+  # Publishes the day's media from the repo itself. Meta's fetcher cannot
+  # reach Actions artifacts, so the files must be reachable at PUBLIC_BASE
+  # (GitHub Pages from the same repo is the simplest option).
+  pages:
+    if: github.event.inputs.publish == 'yes'
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/public
