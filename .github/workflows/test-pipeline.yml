@@ -31,11 +31,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ffmpeg + Pillow
+      - name: Install ffmpeg + fonts
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-liberation
-          pip install Pillow
+          pip install -r requirements.txt
 
       - name: Run pipeline (render only, never publishes)
         env:

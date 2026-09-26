@@ -1,1 +1,3 @@
 Pillow>=10.0
+# voice-over + word timings for the reels; pure python, no system deps
+edge-tts>=6.1

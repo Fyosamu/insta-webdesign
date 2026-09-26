@@ -15,6 +15,7 @@ import datetime as dt
 import json
 import os
 import random
+import re
 import shutil
 import sys
 import traceback
@@ -157,6 +158,36 @@ def make_post(i, used, *, seed, publish=True, copy=None):
             "caption": _caption(copy), "res": res}
 
 
+def _narration(copy):
+    """The paragraph the voice reads.
+
+    Gemini now returns it as one string in `script`; the written templates
+    still carry card lines as a list, so both shapes are accepted and joined.
+    """
+    for key in ("narration", "script"):
+        v = copy.get(key)
+        if isinstance(v, str) and v.strip():
+            return " ".join(v.split())
+        if isinstance(v, list) and v:
+            joined = " ".join(str(x).strip() for x in v if str(x).strip())
+            if joined:
+                return joined
+    return str(copy.get("hook") or "").strip()
+
+
+def _short_lines(copy):
+    """Overlay lines for the silent card reel (the fallback path)."""
+    v = copy.get("script")
+    if isinstance(v, list):
+        out = [str(s).strip() for s in v if str(s).strip()]
+        if out:
+            return out[:6]
+    # a spoken paragraph: cut it into sentences to stand in for card lines
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", _narration(copy))
+             if p.strip()]
+    return parts[:6] or [copy["hook"]]
+
+
 def make_reel(i, used, *, seed, publish=True, copy=None):
     base, pub = _dirs("reels")
     tag = f"reel{i:02d}"
@@ -169,24 +200,39 @@ def make_reel(i, used, *, seed, publish=True, copy=None):
     topic = random.Random(seed + 100 + i).choice(TOPICS)
     query = random.Random(seed * 11 + i).choice(REEL_QUERIES)
     seedv = seed + 500 + i * 17
-    lines = copy.get("script") or [copy["hook"]]
+    narration = _narration(copy)
+    lines = _short_lines(copy)
+    overlay = copy.get("overlay") or copy["hook"]
+    print("  script:", f"{len(narration.split())} words", flush=True)
 
     vid_path = os.path.join(base, f"{tag}_src.mp4")
     still_path = os.path.join(base, f"{tag}_src.jpg")
-    still, src_name = False, None
+    clip_dir = os.path.join(base, f"{tag}_clips")
+    still, src_name, clips = False, None, []
 
+    # Several clips, not one. The narration runs about 45s while a single
+    # stock clip is usually 20-30s, and trimming it short stops the picture
+    # while the voice carries on - the container duration counts the audio,
+    # so nothing looks wrong until the streams are probed separately.
+    # pexels_video returns several distinct results for one query.
     try:
         urls = images.pexels_video(query)
     except Exception:
         urls = []
-    if urls:
+    for n, u in enumerate(urls[:3]):
+        dest = os.path.join(clip_dir, f"clip{n}.mp4")
         try:
-            raw = images._get(urls[0], {}, timeout=300)
-            with open(vid_path, "wb") as fh:
-                fh.write(raw)
-            src_name = "pexels-video"
+            raw = images._get(u, {}, timeout=300)
+            if raw and len(raw) > 100_000:
+                os.makedirs(clip_dir, exist_ok=True)
+                with open(dest, "wb") as fh:
+                    fh.write(raw)
+                clips.append(dest)
         except Exception as e:
-            print("  video download miss:", e, flush=True)
+            print(f"  clip {n} download miss:", e, flush=True)
+    if clips:
+        src_name = "pexels-video"
+        vid_path = clips[0]
 
     if src_name is None:
         try:
@@ -197,33 +243,64 @@ def make_reel(i, used, *, seed, publish=True, copy=None):
         except images.ImageError as e:
             print("  !! no media, skipping:", e, flush=True)
             return None
-    print("  media :", src_name, "still" if still else "video", flush=True)
+    print("  media :", src_name, "still" if still else "video",
+          f"({len(clips)} clips)" if clips else "", flush=True)
 
     source = still_path if still else vid_path
     out_path = os.path.join(pub, f"{tag}.mp4")
     work = os.path.join(base, f"{tag}_work")
+    built = False
     try:
-        reelmod.build(source, out_path, hook=copy.get("overlay") or copy["hook"],
-                      lines=lines[:6], workdir=work,
-                      duration=REEL_SECONDS, still=still, seed=seedv)
-    except Exception as e:
-        print("  reel render failed, retrying as still image:", e, flush=True)
-        if not still:
+        # 1. the voice reel - stock footage, edge-tts narration, subtitles
+        #    timed to the words. This is the format that was reviewed and
+        #    approved; it runs as long as the narration needs, under 60s.
+        if clips:
             try:
-                src_name = images.fetch_to(topic + " concept", still_path,
-                                           portrait=True, seed=seedv)
-                still, source = True, still_path
-                reelmod.build(source, out_path,
-                              hook=copy.get("overlay") or copy["hook"],
+                import talk
+                talk.build(narration, clips, out_path, workdir=work,
+                           hook=overlay)
+                built = True
+                print(f"  voice : {talk.VOICE} @ {talk.RATE}", flush=True)
+            except Exception as e:
+                # TTS or the network can be down; a silent card reel still
+                # gives the account something to post
+                print("  voice reel failed, using the card reel:", e,
+                      flush=True)
+
+        # 2. fallback - the original silent card reel
+        if not built:
+            try:
+                reelmod.build(source, out_path, hook=overlay,
                               lines=lines[:6], workdir=work,
-                              duration=REEL_SECONDS, still=True, seed=seedv)
-            except Exception as e2:
-                print("  !! reel failed twice, skipping:", e2, flush=True)
-                return None
-        else:
-            return None
+                              duration=REEL_SECONDS, still=still, seed=seedv)
+                built = True
+            except Exception as e:
+                print("  reel render failed, retrying as still image:", e,
+                      flush=True)
+                if still:
+                    built = False
+                else:
+                    try:
+                        src_name = images.fetch_to(topic + " concept",
+                                                   still_path,
+                                                   portrait=True, seed=seedv)
+                        still, source = True, still_path
+                        reelmod.build(source, out_path, hook=overlay,
+                                      lines=lines[:6], workdir=work,
+                                      duration=REEL_SECONDS, still=True,
+                                      seed=seedv)
+                        built = True
+                    except Exception as e2:
+                        print("  !! reel failed twice, skipping:", e2,
+                              flush=True)
+                        built = False
     finally:
+        # both the plates talk drew and the downloaded clips are scratch
         shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(clip_dir, ignore_errors=True)
+
+    if not built:
+        return None
     print("  saved :", out_path, flush=True)
 
     cover_path = os.path.join(pub, f"{tag}_cover.jpg")

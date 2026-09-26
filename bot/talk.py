@@ -55,14 +55,18 @@ INTERLINE = int(FONT_SIZE * 0.25)
 VERT_PAD = int(FONT_SIZE * 0.35)
 RADIUS = max(8, int(FONT_SIZE * 0.4))
 
-_CANDIDATE_FONTS = [
-    r"C:\Windows\Fonts\msyhbd.ttc",
-    r"C:\Windows\Fonts\arialbd.ttf",
-    r"C:\Windows\Fonts\segoeuib.ttf",
-    os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))),
-        "assets", "fonts", "MicrosoftYaHeiBold.ttc"),
-]
+_CANDIDATE_FONTS = (
+    # Windows
+    [r"C:\Windows\Fonts\msyhbd.ttc",
+     r"C:\Windows\Fonts\arialbd.ttf",
+     r"C:\Windows\Fonts\segoeuib.ttf"]
+    if os.name == "nt"
+    # GitHub Actions runs Ubuntu: the workflow installs exactly these two
+    # families, so the subtitles render the same there as they do locally.
+    else ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+          "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+          "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"]
+)
 
 
 class TalkError(RuntimeError):

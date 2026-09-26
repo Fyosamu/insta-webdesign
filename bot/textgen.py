@@ -31,7 +31,7 @@ POST_SCHEMA = """{"hook": "max 8 words, the big text on the image",
  "overlay": "max 5 words, the text actually drawn on the image"}"""
 
 REEL_SCHEMA = """{"hook": "max 8 words",
- "script": ["4-7 short spoken lines, 8-14 words each, conversational"],
+ "script": "ONE spoken paragraph of 140-160 words, plain English A1-A2, no emoji, no hashtags, no stage directions, opens with the hook line and ends with one question to the viewer - this is read aloud by a voice-over",
  "caption": "2-4 sentences, ends with one clear question",
  "hashtags": ["8-12, each starts with #"],
  "overlay": "max 5 words for the first frame"}"""
@@ -249,6 +249,10 @@ def _tidy(obj):
     obj["hashtags"] = clean[:12]
     if isinstance(obj.get("script"), list):
         obj["script"] = [str(s).strip() for s in obj["script"] if str(s).strip()]
+    if isinstance(obj.get("narration"), str):
+        obj["narration"] = " ".join(obj["narration"].split())
+    if isinstance(obj.get("script"), str):
+        obj["script"] = " ".join(obj["script"].split())
     return obj
 
 
@@ -264,7 +268,8 @@ def post_copy(used):
 def reel_copy(used):
     try:
         return ask(REEL_SCHEMA, used,
-                   extra="Format: a 15-30s REEL with a voiceover-style script.")
+                   extra="Format: a 40-50s REEL with a voice-over. "
+                        "The script field is the paragraph the voice reads.")
     except CopyError as e:
         print("  gemini unavailable, using written fallback:", e, flush=True)
         return _fallback(used, kind="reel")
@@ -603,4 +608,8 @@ def _fallback(used, kind="post"):
     }
     if kind == "reel":
         obj["script"] = list(lines)
+        # the voice reel reads a paragraph, not card lines: the caption
+        # sentences plus the lines are long enough to sit under a real
+        # voice-over instead of the eight seconds a card reel runs
+        obj["narration"] = " ".join(sentences + lines)
     return _tidy(obj)

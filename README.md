@@ -15,9 +15,42 @@ sell products* - English copy aimed at beginners.
 | ---- | ---- | ----- |
 | 1. copy | Gemini (`gemini-3.8-flash`) | hook, caption, hashtags, reel script. Never repeats a hook - `state/seen.json` is committed back after every run. |
 | 2. media | Pexels API (photos + stock video) | falls back to Pollinations (free, keyless), then to Pinterest if `PINTEREST_TOKEN` is set. |
-| 3. render | Pillow (posts) / ffmpeg (reels) | posts 1080x1350 (4:5), reels 1080x1920 (9:16), 20 s, burned-in captions. |
+| 3. render | Pillow (posts) / ffmpeg (reels) | posts 1080x1350 (4:5). Reels are 1080x1920 (9:16) with a **spoken voice-over** and word-synced subtitles, 40-55 s. |
 | 4. publish | Instagram Graph API | behind a three-part safety gate. |
 | 5. state | `state/seen.json` | committed back so hooks are never reused. |
+
+## The reels: voice-over + synced subtitles
+
+`talk.py` builds each reel from three parts, all free:
+
+1. **footage** - up to three different Pexels clips, chained until they cover
+   the narration. One clip is usually 20-30 s while the voice-over runs 45 s;
+   trimming a short clip short silently stops the picture while the audio
+   keeps going, and because the container duration counts the audio nothing
+   looks wrong until the streams are probed separately. `make_sample.py`
+   checks the video stream against the voice for exactly this reason.
+2. **voice** - `edge-tts`, free and keyless. The default is
+   **`en-GB-SoniaNeural`** at `-6%`, chosen from a ten-way audition
+   (`bot/make_sample.py`, results in `C:\Users\USER\Desktop\insta-voices`).
+   Override per run with `REEL_VOICE` / `REEL_RATE`.
+3. **subtitles** - drawn the way the other channels draw them: white bold
+   text, black outline, dark rounded plate at **70 % opacity**, bottom of
+   frame, geometry ported from MoneyPrinterTurbo's `create_text_clip`
+   (`font*0.4` horizontal padding, `font*0.25` interline, `font*0.4` corner
+   radius, `height*0.95 - plate height`). Timing comes from edge-tts word
+   boundaries, so the line changes exactly when the word is spoken.
+
+   Two traps handled here: a plate's end time used to carry a 0.25 s floor
+   that ran past the next plate's start, so six pairs were on screen at once
+   and drew through each other - ends are now clamped one frame short of the
+   next start. And splitting at a fixed 9-word boundary left stubs (12 words
+   became 9 + 3) that got their own sub-half-second plate; sentences now
+   split into equal pieces.
+
+If edge-tts or the network is down, `pipeline.make_reel` falls back to the
+original silent card reel (`reel.py`) so the account still posts. GitHub
+Actions is Ubuntu, so `talk.py` picks DejaVu/Liberation Bold there and
+Arial/YaHei Bold on Windows.
 
 ## Copy: Gemini, and what happens when the quota runs out
 
@@ -174,10 +207,12 @@ Pages terms on the repo's Settings -> Pages page.
 Locally:
 
 ```bash
+pip install -r requirements.txt    # Pillow + edge-tts (ffmpeg on PATH)
 cd bot
 python -m pipeline --posts=3 --reels=3      # dry run unless env says otherwise
 python test_post.py 1                        # one feed image only
-python test_reel.py 1                        # one reel only
+python test_reel.py 1                        # one silent card reel (fallback path)
+python make_sample.py                        # one voice reel to review
 ```
 
 ## Scheduling
@@ -191,14 +226,16 @@ run itself counts) avoids the first; the second is not a constraint here.
 
 ```
 bot/
-  config.py      environment + secrets, font/ffmpeg lookup
-  textgen.py     Gemini copy, with a no-repeat guard
-  images.py      Pexels / Pollinations / Pinterest sourcing
-  render.py      feed images (Pillow)
-  reel.py        reels (ffmpeg)
-  instagram.py   Graph API publisher + safety gate
-  state.py       published-hook ledger
-  pipeline.py    orchestrator
+  config.py        environment + secrets, font/ffmpeg lookup
+  textgen.py       Gemini copy, with a no-repeat guard
+  images.py        Pexels / Pollinations / Pinterest sourcing
+  render.py        feed images (Pillow)
+  talk.py          voice reels: edge-tts + word-synced subtitles (ffmpeg)
+  reel.py          silent card reels - the fallback path
+  instagram.py     Graph API publisher + safety gate
+  state.py         published-hook ledger
+  pipeline.py      orchestrator
+  make_sample.py   build one sample reel for review
 .github/workflows/
   daily-content.yml   3 posts + 3 reels, schedule commented out
   test-pipeline.yml   always-dry-run smoke test
