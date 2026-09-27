@@ -217,10 +217,19 @@ def main():
     print("3. rendering (voice + subtitles + footage)", flush=True)
     out = os.path.join(SAMPLE_DIR, "sample.mp4")
     t0 = time.time()
-    path, items, total = talk.build(
+    path, items, total, spoken = talk.build(
         script, clips, out, workdir=work, hook=hook)
     print(f"   done in {time.time()-t0:.1f}s, {total:.1f}s of video, "
           f"{len(items)} subtitle plates", flush=True)
+    if spoken != script:
+        # _fit() cut sentences back to fit under a minute - the folder
+        # must describe what is in the video, not what was asked for
+        print(f"   trimmed {len(script.split())} -> {len(spoken.split())} "
+              "words to fit 60s", flush=True)
+        with open(os.path.join(SAMPLE_DIR, "script.txt"), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write("HOOK:\n" + hook + "\n\nNARRATION (as spoken):\n"
+                     + spoken + "\n")
 
     w, h, dur, has_audio = talk.probe(path)
     # the container number includes the audio, so a picture that stops early

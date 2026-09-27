@@ -427,7 +427,10 @@ def build(script, source, out_path, *, workdir, hook=None, voice=None,
     """Render a talking reel: stock footage + voice-over + synced subtitles.
 
     `script` is the sentence that gets spoken (plain English). Returns the
-    output path and the subtitle items that were burned in.
+    output path, the subtitle items that were burned in, the total length,
+    and the script as it was actually narrated - _fit() may have cut it
+    back to fit under a minute, and a report of what shipped has to match
+    what shipped.
     """
     os.makedirs(workdir, exist_ok=True)
     script = " ".join(str(script).split())
@@ -501,7 +504,7 @@ def build(script, source, out_path, *, workdir, hook=None, voice=None,
             "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
             "-movflags", "+faststart", out_path]
     _run(cmd, timeout=900)
-    return out_path, items, total
+    return out_path, items, total, script
 
 
 def _render_hook(out_png, text):
