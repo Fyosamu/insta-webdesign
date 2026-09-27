@@ -47,6 +47,16 @@ sell products* - English copy aimed at beginners.
    became 9 + 3) that got their own sub-half-second plate; sentences now
    split into equal pieces.
 
+   And a script long enough to overrun the one-minute limit used to have
+   its **tail silently chopped off**: `total` was clamped to 59 s while the
+   audio was not, and because the container duration counts the audio, every
+   other check reported a healthy file. A 308-word script measured 99.7 s,
+   so 40.7 s of it simply vanished - visible only by listening to the
+   ending. `talk._fit()` now measures the rate for the chosen voice, drops
+   back to the last **full sentence** that fits inside `MAX_SECONDS - 0.6`
+   (the `0.6` is the pad, which would re-clip otherwise) and reads it again.
+   It refuses rather than guessing when there is no sentence boundary.
+
 If edge-tts or the network is down, `pipeline.make_reel` falls back to the
 original silent card reel (`reel.py`) so the account still posts. GitHub
 Actions is Ubuntu, so `talk.py` picks DejaVu/Liberation Bold there and
@@ -84,6 +94,19 @@ So `daily-content` runs:
    URLs to the Graph API and records what went out.
 
 Skipped entirely when `publish` is anything other than `yes`.
+
+Two details worth knowing:
+
+- **Each day gets an `index.html`** (`pipeline._index()`). The wait step
+  probes `$BASE/$DAY/`, a directory URL, and GitHub Pages answers `404` for
+  a directory with no index - without it the first real publish run would
+  have retried for five minutes and then failed while the media sat there
+  perfectly fine. It also makes a deployed day browsable.
+- **Pages holds only the current day.** `deploy-pages` replaces the whole
+  site each run, so yesterday's directory is gone once today's deploys.
+  That is fine for publishing (Meta fetches inside the same run, while the
+  files are live) but it is not an archive - keep the artifacts if you want
+  to look back.
 
 ## Safety gate
 
