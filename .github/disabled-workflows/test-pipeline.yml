@@ -1,0 +1,67 @@
+# One-shot self test: does the whole pipeline produce files?
+#
+# Runs with no publishing at all (DRY_RUN stays 1), one post and one reel,
+# so you can open the artifacts and judge the quality before enabling
+# anything. Safe to run as often as you like.
+name: test-pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      posts:
+        description: "feed posts to make"
+        required: false
+        default: "1"
+      reels:
+        description: "reels to make"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ffmpeg + fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core fonts-liberation
+          pip install -r requirements.txt
+
+      # Offline and free: proves the subtitle timings cannot overlap before
+      # anything spends a Gemini request or downloads stock footage.
+      - name: Subtitle tests
+        run: |
+          cd bot
+          python test_talk.py
+
+      - name: Run pipeline (render only, never publishes)
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          PEXELS_KEY: ${{ secrets.PEXELS_KEY }}
+          PINTEREST_TOKEN: ${{ secrets.PINTEREST_TOKEN }}
+          DRY_RUN: "1"
+          APPROVED: "0"
+          POSTS: ${{ github.event.inputs.posts || '1' }}
+          REELS: ${{ github.event.inputs.reels || '1' }}
+        run: |
+          cd bot
+          python -m pipeline --posts="$POSTS" --reels="$REELS" --render-only
+
+      - name: Upload sample
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-${{ github.run_number }}
+          path: |
+            out/public/
+            out/report-*.json
+          retention-days: 14
