@@ -42,6 +42,13 @@ RATE = os.environ.get("REEL_RATE", "-6%")
 W, H = 1080, 1920
 FPS = 30
 
+# Instagram refuses a reel of a minute or more. The clamp below has to bite
+# on the AUDIO, not only on the video length - see _fit().
+MAX_SECONDS = 59.0
+# headroom for the pad added after the voice, so a file that fits still
+# fits once the pad is counted
+FIT_SECONDS = MAX_SECONDS - 0.6
+
 # --- subtitle look (MPT defaults, alpha raised as noted above) ------------
 FONT_SIZE = int(os.environ.get("SUB_FONT_SIZE", "60"))
 STROKE_W = 2
@@ -366,6 +373,55 @@ def _clean_voice(mp3, out_wav, duration):
     return out_wav
 
 
+def _fit(script, mp3, words, spoken, workdir, voice, rate):
+    """Cut a narration back so the finished reel fits under a minute.
+
+    Without this, a long script quietly produces a reel whose last seconds
+    are chopped off mid-sentence: `total` is clamped to MAX_SECONDS while
+    the audio is not, and the container duration counts the audio, so every
+    other check reports a perfectly healthy file. Nothing looks wrong until
+    somebody listens to the ending.
+
+    The cut lands on a sentence boundary - a finished sentence is better
+    than a shorter one with its tail missing - and the result is read
+    again. edge-tts is free, so the re-read costs about a second.
+    """
+    if spoken <= FIT_SECONDS:
+        return script, mp3, words, spoken
+
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", script) if s.strip()]
+    if len(sentences) < 2:
+        raise TalkError(
+            f"narration runs {spoken:.0f}s, over the {MAX_SECONDS:.0f}s "
+            "limit, and has no sentence boundary to cut at")
+
+    for _ in range(len(sentences)):
+        # measured rate, so the estimate tracks this voice at this speed
+        per_word = spoken / max(len(words), 1)
+        kept = [sentences[0]]
+        for s in sentences[1:]:
+            candidate = " ".join(kept + [s])
+            if len(candidate.split()) * per_word > FIT_SECONDS:
+                break
+            kept.append(s)
+        trimmed = " ".join(kept)
+        if trimmed == script:
+            break
+        print(f"   narration {spoken:.0f}s > {MAX_SECONDS:.0f}s: cutting to "
+              f"{len(trimmed.split())} words at a sentence end", flush=True)
+        script, mp3, words = trimmed, *speak(trimmed, workdir,
+                                              voice=voice, rate=rate)
+        spoken = duration_of(mp3)
+        if spoken <= 0:
+            raise TalkError("could not read the trimmed voice duration")
+        if spoken <= FIT_SECONDS:
+            return script, mp3, words, spoken
+
+    raise TalkError(
+        f"narration is {spoken:.0f}s, over the {MAX_SECONDS:.0f}s "
+        "Instagram limit even after cutting back to full sentences")
+
+
 def build(script, source, out_path, *, workdir, hook=None, voice=None,
           rate=None, duration=None, keep_notes=False):
     """Render a talking reel: stock footage + voice-over + synced subtitles.
@@ -383,9 +439,13 @@ def build(script, source, out_path, *, workdir, hook=None, voice=None,
     if spoken <= 0:
         raise TalkError("could not read the voice duration")
 
+    # a reel that overruns gets cut off mid-word below, so fit it first
+    script, mp3, words, spoken = _fit(script, mp3, words, spoken,
+                                       workdir, voice, rate)
+
     total = duration or spoken
     # tiny pad so the last word is never clipped, but never over the limit
-    total = min(max(total + 0.6, 4.0), 59.0)
+    total = min(max(total + 0.6, 4.0), MAX_SECONDS)
 
     items = subtitle_items(script, words, total)
     if not items:

@@ -149,13 +149,57 @@ def test_live():
     print(f"         {len(items)} plates over {total:.1f}s")
 
 
+def test_fit_offline():
+    print("\n5. an over-long narration is cut at a sentence, not mid-word")
+    # what the old code did: clamp the video length but not the audio
+    spoken, limit = 99.7, talk.MAX_SECONDS
+    check("the bug it guards needs >limit audio",
+          spoken > limit,
+          "fixture is not long enough to be a regression test")
+    check("FIT leaves room for the pad",
+          talk.FIT_SECONDS < talk.MAX_SECONDS
+          and abs((talk.MAX_SECONDS - talk.FIT_SECONDS) - 0.6) < 1e-9,
+          f"FIT={talk.FIT_SECONDS} MAX={talk.MAX_SECONDS}")
+    # a single sentence has no safe cut point, so it must refuse rather
+    # than silently chop the tail off
+    try:
+        talk._fit("Just one very long sentence without any stop in it",
+                  "x", [(0, 0.1, "x")], 80.0, ".", None, None)
+        check("one-sentence overrun raises", False, "returned instead")
+    except talk.TalkError as e:
+        check("one-sentence overrun raises", True)
+        print("         ->", e)
+
+
+def test_fit_live():
+    print("\n6. 300-word narration shortened to fit (network)")
+    sentence = ("A website is the only place on the internet that you own "
+                "completely, and nobody can take it away from you overnight.")
+    script = " ".join([sentence] * 14)
+    import tempfile
+    d = tempfile.mkdtemp(prefix="fit_")
+    try:
+        mp3, words = talk.speak(script, d)
+        spoken = talk.duration_of(mp3)
+        check("fixture is actually over the limit",
+              spoken > talk.MAX_SECONDS, f"{spoken:.1f}s")
+        _, _, _, fitted = talk._fit(script, mp3, words, spoken, d, None, None)
+        check(f"fits ({spoken:.0f}s -> {fitted:.1f}s)",
+              fitted <= talk.FIT_SECONDS)
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     print("talk.py subtitle tests  (voice=%s)" % talk.VOICE)
     test_overlap_offline()
     test_no_stubs()
     test_plate_geometry()
+    test_fit_offline()
     if "--live" in sys.argv:
         test_live()
+        test_fit_live()
 
     print()
     if FAILURES:
