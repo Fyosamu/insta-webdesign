@@ -25,14 +25,19 @@ HOOK = os.environ.get("SAMPLE_HOOK", "")
 # Used when Gemini is out of quota - written to the same length and rhythm
 # as what the model returns, so the sample looks the same either way.
 FALLBACK_SCRIPT = (
-    "Here is the truth. People hear about your business, then they search "
-    "your name. If nothing comes up, they move on to someone else. "
-    "Your website is the first impression you never get to make in person. "
-    "It also keeps working after you close. Your shop locks the door at "
-    "night, but your page stays open, showing prices and taking orders at "
-    "three in the morning. "
-    "And you do not need code or a big budget. One page with your products, "
-    "your prices and a single way to pay is enough to start. "
+    # The first sentence is doing double duty: it is the hook drawn on the
+    # thumbnail AND the first line spoken, so it has to work as a punchy
+    # seven-word line and still lead into what follows. "Here is the truth"
+    # read well aloud and said nothing on a cover image.
+    "Nobody can find you online. People hear about your business, then "
+    "they search your name. If nothing comes up, they move on to someone "
+    "else. Your website is the first impression you never get to make in "
+    "person. It also keeps working after you close. Your shop locks the "
+    "door at night, but your page stays open, showing prices and taking "
+    "orders at three in the morning. "
+    "And you do not need to write any code or spend a big budget. One "
+    "page with your products, your prices and a single way to pay is "
+    "enough to start. "
     "So ask yourself this. If someone searched for you right now, what "
     "would they find?"
 )
