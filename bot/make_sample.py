@@ -16,7 +16,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 SAMPLE_DIR = os.environ.get(
-    "SAMPLE_DIR", r"C:\Users\USER\Desktop\insta-samples-voice")
+    "SAMPLE_DIR", r"C:\Users\USER\Desktop\insta-sample-akhob59")
 
 # Optional manual override - by default the hook is derived from the script
 # so the on-screen line and the voice always say the same thing.
@@ -136,6 +136,49 @@ def cached_clips(cache_dir):
     return out
 
 
+def make_cover(workdir, video, dest, hook, seed=0):
+    """The thumbnail Instagram shows in the grid.
+
+    Taken from talk's cropped background plate (`_work/bg.mp4`) rather than
+    from the finished reel. The finished frame already has the hook overlay
+    and a subtitle line burned into it, and `render_cover` draws its own
+    text on top - stacking three pieces of writing in one frame. The clean
+    plate gives it footage to work with, and render_cover's veil does the
+    rest. It is the same function the daily pipeline uses for reel covers,
+    so what is reviewed here is what would ship.
+    """
+    import subprocess
+    import render
+    from config import FFMPEG
+
+    bg = os.path.join(workdir, "bg.mp4")
+    src = bg if os.path.exists(bg) else video
+    poster = os.path.join(dest, "_poster.jpg")
+    out = os.path.join(dest, "thumbnail.jpg")
+    try:
+        # a few seconds in, so the plate is not the first frame of a clip;
+        # output-side seek, because the background has sparse keyframes
+        subprocess.run([FFMPEG, "-y", "-i", src, "-ss", "4",
+                        "-frames:v", "1", poster],
+                       capture_output=True, timeout=120)
+        if not os.path.exists(poster) or os.path.getsize(poster) < 5000:
+            subprocess.run([FFMPEG, "-y", "-i", src, "-frames:v", "1", poster],
+                           capture_output=True, timeout=120)
+        if not os.path.exists(poster) or os.path.getsize(poster) < 5000:
+            return None
+        render.render_cover(poster, out, hook, hook=hook, seed=seed)
+        return out if os.path.exists(out) else None
+    except Exception as e:
+        print("   thumbnail skipped:", e, flush=True)
+        return None
+    finally:
+        try:
+            if os.path.exists(poster):
+                os.remove(poster)
+        except OSError:
+            pass
+
+
 def main():
     import talk
 
@@ -194,6 +237,12 @@ def main():
         print("   !! over 60s", flush=True)
         return 1
 
+    cover = make_cover(work, path, SAMPLE_DIR, hook)
+    if cover:
+        print("   thumbnail:", os.path.basename(cover), flush=True)
+    else:
+        print("   !! no thumbnail", flush=True)
+
     shutil.rmtree(work, ignore_errors=True)
 
     # a text file next to it, so the sample folder is self-explanatory
@@ -209,6 +258,7 @@ def main():
             f"             outline, dark rounded plate at "
             f"{talk.PLATE_ALPHA/255:.0%} opacity, bottom of frame,\n"
             f"             {len(items)} plates timed to the spoken words\n"
+            f"thumbnail  : {'thumbnail.jpg (1080x1920)' if cover else 'failed'}\n"
             "footage    : Pexels stock\n"
             "hook       : " + hook + "\n")
     print("   wrote ABOUT.txt", flush=True)
