@@ -16,7 +16,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 SAMPLE_DIR = os.environ.get(
-    "SAMPLE_DIR", r"C:\Users\USER\Desktop\uoooooo")
+    "SAMPLE_DIR", r"C:\Users\USER\Desktop\ooop")
 
 # Optional manual override - by default the hook is derived from the script
 # so the on-screen line and the voice always say the same thing.
