@@ -111,10 +111,14 @@ def fetch_footage(dest_dir, wanted=3):
     import images
     os.makedirs(dest_dir, exist_ok=True)
     got = []
-    queries = (QUERY, "typing on laptop keyboard close up",
-               "online shopping website on a phone",
-               "small business owner packing an order",
-               "woman browsing a website on her phone")
+    # SAMPLE_QUERIES lets a second sample look like a second sample rather
+    # than the same three stock shots in a different order.
+    extra = os.environ.get("SAMPLE_QUERIES", "")
+    queries = tuple(q.strip() for q in extra.split("|") if q.strip()) or (
+        QUERY, "typing on laptop keyboard close up",
+        "online shopping website on a phone",
+        "small business owner packing an order",
+        "woman browsing a website on her phone")
     for q in queries:
         if len(got) >= wanted:
             break
@@ -195,6 +199,28 @@ def make_cover(workdir, video, dest, hook, seed=0):
             pass
 
 
+def write_srt(items, path):
+    """Dump the burned-in timings next to the video.
+
+    Subtitles are painted into the pixels, so once the file exists there is
+    no way to read the timings back out of it: a reviewer could see that two
+    lines sat on top of each other, but not that they did not. Keeping the
+    source timings is what makes the non-overlap check possible after the
+    fact - and on a machine other than the one that rendered it.
+    """
+    def stamp(t):
+        t = max(0.0, float(t))
+        ms = int(round(t * 1000))
+        h, ms = divmod(ms, 3600000)
+        m, ms = divmod(ms, 60000)
+        s, ms = divmod(ms, 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        for i, (start, end, text) in enumerate(items, start=1):
+            fh.write(f"{i}\n{stamp(start)} --> {stamp(end)}\n{text}\n\n")
+
+
 def main():
     import talk
 
@@ -202,7 +228,7 @@ def main():
     # slow part and they do not change between runs
     os.makedirs(SAMPLE_DIR, exist_ok=True)
     cache_dir = os.path.join(SAMPLE_DIR, "footage")
-    for name in ("sample.mp4", "ABOUT.txt", "script.txt"):
+    for name in ("sample.mp4", "ABOUT.txt", "script.txt", "captions.srt"):
         p = os.path.join(SAMPLE_DIR, name)
         if os.path.exists(p):
             os.remove(p)
@@ -237,6 +263,7 @@ def main():
         script, clips, out, workdir=work, hook=hook)
     print(f"   done in {time.time()-t0:.1f}s, {total:.1f}s of video, "
           f"{len(items)} subtitle plates", flush=True)
+    write_srt(items, os.path.join(SAMPLE_DIR, "captions.srt"))
     if spoken != script:
         # _fit() cut sentences back to fit under a minute - the folder
         # must describe what is in the video, not what was asked for

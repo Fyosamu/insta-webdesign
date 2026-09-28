@@ -136,7 +136,7 @@ def test_plate_geometry():
 
 
 def test_live():
-    print("\n4. real edge-tts boundaries (network)")
+    print("\n6. real edge-tts boundaries (network)")
     mp3, words = talk.speak(SCRIPT, os.path.join(os.getcwd(), "_tts_test"))
     total = talk.duration_of(mp3)
     check("audio produced", total > 1.0, f"{total}s")
@@ -172,7 +172,7 @@ def test_fit_offline():
 
 
 def test_fit_live():
-    print("\n6. 300-word narration shortened to fit (network)")
+    print("\n7. 300-word narration shortened to fit (network)")
     sentence = ("A website is the only place on the internet that you own "
                 "completely, and nobody can take it away from you overnight.")
     script = " ".join([sentence] * 14)
@@ -191,11 +191,49 @@ def test_fit_live():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _rows(phrase):
+    """Rows a plate would draw - same numbers render_plate uses."""
+    font = talk._load_font(talk.FONT_SIZE)
+    text_max = max(1, talk.MAX_WIDTH - 2 * int(talk.FONT_SIZE * 0.4))
+    return len(talk._wrap_lines(phrase, font, text_max))
+
+
+def test_two_rows_max():
+    print("\n4. no plate draws more than two rows")
+    # _MAX_WORDS = 9 assumed word count stood in for width. This phrase
+    # disproves it: eight words, three rows, burned into the second sample
+    # before anything measured it. Prove the fixture really is broken when
+    # left unsplit, then that it is not broken now.
+    LONG = ("Search engines, ads and messages all point somewhere, and "
+            "that somewhere has to belong to you.")
+
+    naive = [" ".join(p) for p in talk._chunks(LONG.split(), talk._MAX_WORDS)]
+    worst = max(_rows(p) for p in naive)
+    check(f"unsplit, this phrase does draw {worst} rows",
+          worst > talk._MAX_ROWS,
+          "fixture no longer reproduces the bug")
+
+    for label, text in (("fixture", SCRIPT), ("the three-row phrase", LONG)):
+        phrases = talk._phrases(text)
+        overs = [p for p in phrases if _rows(p) > talk._MAX_ROWS]
+        check(f"{label}: {len(phrases)} plates, none past "
+              f"{talk._MAX_ROWS} rows", not overs, str(overs[:1]))
+
+    # the fix must not have earned its rows back as stubs - that is the
+    # other way this went wrong once already
+    sizes = [len(p.split()) for p in talk._phrases(LONG)]
+    biggest, smallest = max(sizes), min(sizes)
+    check(f"cut stays even ({sizes})",
+          smallest >= max(3, biggest // 3) or len(sizes) == 1,
+          f"stub of {smallest} vs {biggest}")
+
+
 def main():
     print("talk.py subtitle tests  (voice=%s)" % talk.VOICE)
     test_overlap_offline()
     test_no_stubs()
     test_plate_geometry()
+    test_two_rows_max()
     test_fit_offline()
     if "--live" in sys.argv:
         test_live()

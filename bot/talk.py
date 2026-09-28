@@ -151,7 +151,8 @@ def duration_of(path):
 
 # --- timing ---------------------------------------------------------------
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
-_MAX_WORDS = 9          # a line this long already wraps to two rows
+_MAX_WORDS = 9          # first cut - a coarse ceiling, refined by _split_to_rows
+_MAX_ROWS = 2           # rows a plate may occupy before the text is cut shorter
 
 
 def _chunks(words, limit):
@@ -170,8 +171,13 @@ def _chunks(words, limit):
     return [words[i:i + size] for i in range(0, n, size)]
 
 
-def subtitle_items(text, words, total=None):
-    """Group the word boundaries into phrases, the way 'sentence' mode does."""
+def _phrases(text):
+    """The plates that will be drawn for `text`, in order.
+
+    Two cuts, in this order: _chunks evens the sentence out so no piece is a
+    stub, then _split_to_rows measures what is left against the real font and
+    cuts again if it would draw more rows than a plate is meant to have.
+    """
     phrases = []
     for sent in _SENT_SPLIT.split(text.strip()):
         sent = sent.strip()
@@ -179,7 +185,14 @@ def subtitle_items(text, words, total=None):
             continue
         ws = sent.split()
         for piece in _chunks(ws, _MAX_WORDS):
-            phrases.append(" ".join(piece))
+            for part in _split_to_rows(piece):
+                phrases.append(" ".join(part))
+    return phrases
+
+
+def subtitle_items(text, words, total=None):
+    """Group the word boundaries into phrases, the way 'sentence' mode does."""
+    phrases = _phrases(text)
     if not phrases:
         return []
 
@@ -234,6 +247,46 @@ def _wrap_lines(phrase, font, max_w):
     if cur:
         lines.append(cur)
     return lines or [""]
+
+
+def _rows_for(words):
+    """Rows the joined phrase draws, measured at the font that burns it in.
+
+    Word count cannot answer this. Eight short words sit on one row; the
+    phrase that drew three rows in the second sample was eight words too.
+    So ask the font, using the same numbers render_plate will use - the
+    answer cannot drift from what the viewer actually sees.
+    """
+    if not words:
+        return 0
+    font = _load_font(FONT_SIZE)
+    text_max = max(1, MAX_WIDTH - 2 * int(FONT_SIZE * 0.4))
+    return len(_wrap_lines(" ".join(words), font, text_max))
+
+
+def _split_to_rows(words):
+    """Cut a phrase until every piece draws at most _MAX_ROWS rows.
+
+    Only cuts when it has to, and always into *equal* pieces: an uneven
+    split is how the 9+3 stub happened, a two-word plate flashing for a
+    third of a second. More, shorter pieces is the only lever that helps -
+    re-flowing the same words wider just moves the third row back onto the
+    second.
+
+    Defined below subtitle_items on purpose: it only needs to exist by the
+    time a script is actually timed, not when the module is imported.
+    """
+    n = len(words)
+    if n < 2 or _rows_for(words) <= _MAX_ROWS:
+        return [words]
+    for k in range(2, n):
+        size = -(-n // k)                       # ceil, the way _chunks does
+        pieces = [words[i:i + size] for i in range(0, n, size)]
+        if len(pieces) < 2:
+            continue
+        if all(_rows_for(p) <= _MAX_ROWS for p in pieces):
+            return pieces
+    return [words]
 
 
 def render_plate(out_png, phrase, font_size=FONT_SIZE):
