@@ -80,6 +80,14 @@ def _ready():
         return "IG_ACCESS_TOKEN / IG_USER_ID not set"
     if not PUBLIC_BASE:
         return "PUBLIC_BASE not set"
+    # Meta's fetcher runs from its own servers and refuses to reach yours -
+    # this used to be a note in the module docstring and nothing more, so a
+    # local base would have passed every check and then failed on container
+    # creation with a message that does not mention the URL
+    if PUBLIC_BASE.startswith(("http://localhost", "http://127.",
+                               "http://[::1]")):
+        return ("PUBLIC_BASE points at localhost, which Instagram cannot "
+                "fetch - use your GitHub Pages base instead")
     return None
 
 

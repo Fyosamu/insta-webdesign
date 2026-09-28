@@ -31,8 +31,20 @@ def _gemini_key():
     return ""
 
 
+def _secret(env_name, filename):
+    """Env var first, then a gitignored local file - same shape as _gemini_key,
+    so a local run needs no exported variables and no secret is committed."""
+    k = os.environ.get(env_name, "").strip()
+    if k:
+        return k
+    p = os.path.join(_HERE, filename)
+    if os.path.exists(p):
+        return open(p, encoding="utf-8").read().strip()
+    return ""
+
+
 GEMINI_KEY = _gemini_key()
-PEXELS_KEY = os.environ.get("PEXELS_KEY", "").strip()
+PEXELS_KEY = _secret("PEXELS_KEY", ".pexels")
 
 # Optional integrations - the pipeline degrades gracefully when absent.
 PINTEREST_TOKEN = os.environ.get("PINTEREST_TOKEN", "").strip()

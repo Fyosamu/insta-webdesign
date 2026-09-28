@@ -110,7 +110,10 @@ jobs:
   # option - enable it once under Settings -> Pages -> Source: GitHub Actions.
   pages:
     needs: build
-    if: github.event.inputs.publish == 'yes'
+    # A scheduled run carries no `inputs`, so testing inputs.publish alone
+    # would skip this job on every cron run - the schedule would render and
+    # never post. Kept in sync with the publish job below.
+    if: github.event_name == 'schedule' || github.event.inputs.publish == 'yes'
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -132,7 +135,8 @@ jobs:
 
   publish:
     needs: [build, pages]
-    if: github.event.inputs.publish == 'yes'
+    # same condition as the pages job, for the same reason
+    if: github.event_name == 'schedule' || github.event.inputs.publish == 'yes'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

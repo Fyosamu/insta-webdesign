@@ -80,44 +80,67 @@ def _bottom_fade(img, frac=0.34, strength=120):
     return out.convert("RGB")
 
 
-def _plate_text(canvas, text, *, top, colour=WHITE, size=None, accent=None,
-                maxw_frac=0.88, plate=150, align="center"):
-    """Draw `text` centred on rounded translucent plates."""
+def _plate_text(canvas, text, *, band=None, top=None, colour=WHITE, size=None,
+                accent=None, maxw_frac=0.88, plate=150, align="center"):
+    """Draw `text` centred horizontally AND vertically inside `band`.
+
+    `band` is a (top, bottom) region - the whole block is placed in its exact
+    middle instead of flowing down from a fixed offset, so one line and four
+    lines both land dead centre of the dark area. A single plate wraps the
+    block rather than one plate per line, which is what the style guide asks
+    for and what stops the text looking like a stack of stickers.
+    """
     w, h = canvas.size
     d = ImageDraw.Draw(canvas)
     maxw = int(w * maxw_frac)
     probe = ImageDraw.Draw(Image.new("L", (8, 8)))
 
+    if band is None:
+        y0 = int(top if top is not None else h * 0.10)
+        band = (y0, y0 + int(h * 0.42))
+    b0, b1 = band
+    band_h = b1 - b0
+
+    def metrics(sz):
+        """wrap + real ink boxes, so centring uses drawn pixels not estimates"""
+        fnt = _font(sz)
+        lines = _wrap(probe, text, fnt, maxw - 56)
+        gap = max(8, int(sz * 0.18))
+        boxes = [probe.textbbox((0, 0), ln, font=fnt) for ln in lines]
+        heights = [b[3] - b[1] for b in boxes]
+        total = sum(heights) + gap * (len(lines) - 1)
+        return fnt, lines, boxes, heights, gap, total
+
+    # shrink until the block fits comfortably inside the band
     size = size or int(h * 0.062)
     while size >= 24:
-        fnt = _font(size)
-        lines = _wrap(probe, text, fnt, maxw - 48)
-        lh = int(size * 1.16)
-        if len(lines) * lh <= h * 0.42:
+        fnt, lines, boxes, heights, gap, total = metrics(size)
+        if total <= band_h * 0.88:
             break
         size -= 4
+    fnt, lines, boxes, heights, gap, total = metrics(size)
 
-    fnt = _font(size)
-    lines = _wrap(probe, text, fnt, maxw - 48)
-    lh = int(size * 1.16)
-    gap = 14
-    block = len(lines) * lh + (len(lines) - 1) * gap
-    y = top
+    # exact vertical centre of the band
+    y = b0 + (band_h - total) / 2
 
-    for i, ln in enumerate(lines):
-        tw = probe.textlength(ln, font=fnt)
-        if align == "center":
-            x = (w - tw) // 2
-        else:
-            x = int(w * 0.06)
-        d.rounded_rectangle(
-            [x - 22, y - 10, x + tw + 22, y + lh - 12],
-            radius=18, fill=(0, 0, 0, plate))
-        d.text((x, y), ln, font=fnt, fill=colour)
+    # one plate around the entire block
+    pad_x, pad_y = 30, 24
+    draws = []
+    for ln, box in zip(lines, boxes):
+        iw = box[2] - box[0]
+        x = ((w - iw) / 2 - box[0]) if align == "center" else int(w * 0.06) - box[0]
+        draws.append((ln, box, x))
+    x0 = min(x + box[0] for _, box, x in draws)
+    x1 = max(x + box[2] for _, box, x in draws)
+    d.rounded_rectangle([x0 - pad_x, y - pad_y, x1 + pad_x, y + total + pad_y],
+                        radius=24, fill=(0, 0, 0, plate))
+
+    for i, (ln, box, x) in enumerate(draws):
+        d.text((x, y - box[1]), ln, font=fnt, fill=colour)
         if accent and i == 0:
-            d.text((x, y), ln, font=fnt, fill=accent)
-        y += lh + gap
-    return block
+            d.text((x, y - box[1]), ln, font=fnt, fill=accent)
+        y += heights[i] + gap
+    return total
 
 
 def render(image_path, out_path, overlay, *, mode="post", hook=None,
@@ -132,9 +155,12 @@ def render(image_path, out_path, overlay, *, mode="post", hook=None,
     canvas = _bottom_fade(canvas)
 
     text = (overlay or hook or "").strip()
-    top = int(H * 0.10)
     if text:
-        _plate_text(canvas, text, top=top, colour=WHITE, plate=155)
+        # _veil() darkens 0..52%H, so its midpoint is 26%H. These bounds are
+        # symmetric about that (0.10+0.42)/2 = 0.26, and 0.10H clears the hook
+        # chip that sits at 0.045H..0.075H.
+        _plate_text(canvas, text, band=(int(H * 0.10), int(H * 0.42)),
+                    colour=WHITE, plate=155)
 
     if hook and hook.strip() and hook.strip().lower() != text.lower():
         fnt = _font(int(H * 0.030))
@@ -170,8 +196,10 @@ def render_cover(image_path, out_path, overlay, *, hook=None, seed=0):
     canvas = _veil(canvas, frac=0.46, strength=150)
     text = (overlay or "").strip()
     if text:
-        _plate_text(canvas, text, top=int(1920 * 0.11), colour=WHITE,
-                    size=int(1920 * 0.050), plate=155)
+        # cover veil covers 0..46%H -> midpoint 23%H; these bounds are
+        # symmetric about it and 0.12H clears the hook chip at y=120..196.
+        _plate_text(canvas, text, band=(int(1920 * 0.12), int(1920 * 0.34)),
+                    colour=WHITE, size=int(1920 * 0.050), plate=155)
     if hook and hook.strip() and hook.strip().lower() != text.lower():
         fnt = _font(52)
         d = ImageDraw.Draw(canvas)

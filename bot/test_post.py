@@ -8,7 +8,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # never publish during a local test
 os.environ["DRY_RUN"] = "1"
 os.environ["APPROVED"] = "0"
-os.environ.setdefault("OUT_DIR", r"C:\Users\USER\Desktop\insta-webdesign\out")
+os.environ.setdefault(
+    "OUT_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "out"))
 
 import pipeline  # noqa: E402
 

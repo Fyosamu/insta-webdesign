@@ -3,5 +3,6 @@ __pycache__/
 state/seen.json.tmp
 out/
 bot/.key
+bot/.pexels
 *.secret.json
 gh-sample/
