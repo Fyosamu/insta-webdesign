@@ -236,7 +236,12 @@ python -m pipeline --posts=3 --reels=3      # dry run unless env says otherwise
 python test_post.py 1                        # one feed image only
 python test_reel.py 1                        # one silent card reel (fallback path)
 python make_sample.py                        # one voice reel to review
+python verify_sample.py <folder>             # gate it: no overlap, 2 rows, loudness
 ```
+
+`make_sample.py` also writes `captions.srt` beside the video — the subtitles
+are painted into the pixels, so those timings are the only way to prove
+afterwards that no two plates shared a moment on screen.
 
 ## Scheduling
 
@@ -258,8 +263,11 @@ bot/
   instagram.py     Graph API publisher + safety gate
   state.py         published-hook ledger
   pipeline.py      orchestrator
+  ideas.py         the 100,000-hook content bank: build / find / check
   make_sample.py   build one sample reel for review
   test_talk.py     guards the subtitle timing invariants (offline)
+  test_publish.py  walks container -> poll -> publish against a mock Graph API
+  verify_sample.py gate a finished sample: overlap, rows, loudness, codec
 .github/workflows/
   daily-content.yml   3 posts + 3 reels, schedule commented out
   test-pipeline.yml   always-dry-run smoke test
