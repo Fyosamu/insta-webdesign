@@ -64,6 +64,30 @@ jobs:
           cd bot
           python test_talk.py
 
+      # Offline: the overlay must land dead centre of its dark band, or the
+      # post reads as a stack of stickers. Checked at both shapes - the feed
+      # post and the reel cover use different bands.
+      - name: Layout tests
+        run: |
+          cd bot
+          python test_center.py
+          python test_center_cover.py
+
+      # Offline: walks the container -> poll -> publish dance against a mock
+      # Graph API, and checks the gate closes on every condition. This path
+      # has never run with a real token, so the mock is what proves it.
+      - name: Publish sequence tests
+        run: |
+          cd bot
+          python test_publish.py
+
+      # Offline: the 100k-idea bank - a repeated hook or an unfilled slot
+      # means the generator drifted, and it is cheap to catch here.
+      - name: Idea bank check
+        run: |
+          cd bot
+          python ideas.py check
+
       - name: Restore state (prevents duplicate hooks across runs)
         run: |
           mkdir -p state

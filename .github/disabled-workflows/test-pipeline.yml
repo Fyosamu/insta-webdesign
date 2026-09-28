@@ -44,6 +44,25 @@ jobs:
           cd bot
           python test_talk.py
 
+      # Offline: overlay text must be centred in its band, on both shapes.
+      - name: Layout tests
+        run: |
+          cd bot
+          python test_center.py
+          python test_center_cover.py
+
+      # Offline: container -> poll -> publish against a mock Graph API.
+      - name: Publish sequence tests
+        run: |
+          cd bot
+          python test_publish.py
+
+      # Offline: quality gate over the 100k-idea bank.
+      - name: Idea bank check
+        run: |
+          cd bot
+          python ideas.py check
+
       - name: Run pipeline (render only, never publishes)
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}

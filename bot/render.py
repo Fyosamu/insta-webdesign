@@ -188,27 +188,36 @@ def render(image_path, out_path, overlay, *, mode="post", hook=None,
     return out_path, text
 
 
-def render_cover(image_path, out_path, overlay, *, hook=None, seed=0):
-    """1080x1920 cover - used as the reel poster / first frame."""
+def render_cover(image_path, out_path, overlay, *, hook=None, seed=0,
+                 size=(1080, 1920)):
+    """Cover / thumbnail at an arbitrary size.
+
+    1080x1920 by default - the reel poster. The long and short thumbnails
+    ask for 1280x720 and 720x1280 instead, so every vertical offset below
+    is the 1920-pixel value expressed as a fraction of the actual height.
+    """
+    cw, ch = size
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     base = Image.open(image_path).convert("RGB")
-    canvas = _cover(base, 1080, 1920)
+    canvas = _cover(base, cw, ch)
     canvas = _veil(canvas, frac=0.46, strength=150)
     text = (overlay or "").strip()
     if text:
-        # cover veil covers 0..46%H -> midpoint 23%H; these bounds are
-        # symmetric about it and 0.12H clears the hook chip at y=120..196.
-        _plate_text(canvas, text, band=(int(1920 * 0.12), int(1920 * 0.34)),
-                    colour=WHITE, size=int(1920 * 0.050), plate=155)
+        # veil covers 0..46% of the height -> midpoint 23%; these bounds are
+        # symmetric about it and the lower edge clears the hook chip below.
+        _plate_text(canvas, text, band=(int(ch * 0.12), int(ch * 0.34)),
+                    colour=WHITE, size=int(ch * 0.050), plate=155)
     if hook and hook.strip() and hook.strip().lower() != text.lower():
-        fnt = _font(52)
+        fnt = _font(max(18, round(ch * 52 / 1920)))
         d = ImageDraw.Draw(canvas)
         probe = ImageDraw.Draw(Image.new("L", (8, 8)))
         sub = hook.strip().upper()
         tw = probe.textlength(sub, font=fnt)
         d.rounded_rectangle(
-            [(1080 - tw) // 2 - 24, 120, (1080 + tw) // 2 + 24, 196],
+            [(cw - tw) // 2 - 24, round(ch * 120 / 1920),
+             (cw + tw) // 2 + 24, round(ch * 196 / 1920)],
             radius=16, fill=(0, 0, 0, 145))
-        d.text(((1080 - tw) // 2, 131), sub, font=fnt, fill=GOLD)
+        d.text(((cw - tw) // 2, round(ch * 131 / 1920)), sub, font=fnt,
+               fill=GOLD)
     canvas.save(out_path, "JPEG", quality=93, optimize=True)
     return out_path, text

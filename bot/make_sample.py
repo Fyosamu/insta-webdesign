@@ -22,6 +22,11 @@ SAMPLE_DIR = os.environ.get(
 # so the on-screen line and the voice always say the same thing.
 HOOK = os.environ.get("SAMPLE_HOOK", "")
 
+# Bring your own narration. Skips the Gemini call outright, so a sample can
+# be built on a machine with no key - the script is the part that is worth
+# reviewing by hand anyway.
+SCRIPT = os.environ.get("SAMPLE_SCRIPT", "")
+
 # Used when Gemini is out of quota - written to the same length and rhythm
 # as what the model returns, so the sample looks the same either way.
 FALLBACK_SCRIPT = (
@@ -49,6 +54,12 @@ QUERY = os.environ.get(
 def narration_script():
     """Returns (hook, narration) - the hook is always the first line of
     what gets spoken, so the text on screen and the voice never disagree."""
+    if SCRIPT.strip():
+        # an explicit script wins over Gemini: no key, no quota, no waiting
+        s = re.sub(r"\s+", " ", SCRIPT).strip()
+        print(f"  script from SAMPLE_SCRIPT ({len(s.split())} words)",
+              flush=True)
+        return _hook_from(s), s
     try:
         import textgen
         schema = ('{"hook": "max 7 words, the punchiest short line of the '
