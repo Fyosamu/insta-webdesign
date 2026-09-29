@@ -190,7 +190,21 @@ fields=instagram_business_account&access_token=LONG_TOKEN"
 
 Set the result as `IG_USER_ID`, and the long token as `IG_ACCESS_TOKEN`.
 
-**e. App Review**
+**e. Verify both, before anything is allowed to publish**
+
+```bash
+cd bot
+python instagram.py check
+```
+
+Read-only — it prints the gate, reads the account back and spends no post.
+It exits non-zero when `account_type` is not `BUSINESS` or `CREATOR`, which
+matters: otherwise a personal account is accepted here and only refused
+later at container creation, with an error that never mentions the account
+type. Run this the moment the two values exist, and again after every token
+renewal.
+
+**f. App Review**
 
 To publish to a real account (not just a test user) Meta usually requires
 **App Review**, where you record a short screen-capture of the flow. This is

@@ -159,3 +159,49 @@ def check_account():
                 "account_type": acct.get("account_type")}
     except PublishError as e:
         return {"ok": False, "reason": str(e)}
+
+
+def _cli(argv):
+    """`python instagram.py check` - prove the credentials without publishing.
+
+    Read-only: it reads the account back and prints the gate state, and it
+    spends no post. Run it the moment a token arrives, before any workflow is
+    allowed anywhere near the publish path - a bad token caught here costs
+    nothing, while one caught in a run has already built six pieces of media.
+    """
+    cmd = (argv[1] if len(argv) > 1 else "check").strip().lower()
+    if cmd != "check":
+        print(__doc__)
+        print("usage: python instagram.py check")
+        return 2
+
+    print("IG_ACCESS_TOKEN   " + (f"set ({len(IG_ACCESS_TOKEN)} chars)"
+                                  if IG_ACCESS_TOKEN else "MISSING"))
+    print("IG_USER_ID        " + (IG_USER_ID if IG_USER_ID else "MISSING"))
+    print("PUBLIC_BASE       " + (PUBLIC_BASE if PUBLIC_BASE else "MISSING"))
+    print(f"DRY_RUN           {DRY_RUN}")
+    print(f"APPROVED          {APPROVED}")
+
+    blocked = gate()
+    print("gate              " + (blocked if blocked else "OPEN"))
+
+    result = check_account()
+    if not result.get("ok"):
+        print("account           FAILED - " + str(result.get("reason")))
+        return 1
+
+    acct_type = str(result.get("account_type") or "").upper()
+    print(f"account           @{result.get('username')}  ({acct_type})"
+          f"  as {result.get('name')}")
+    if acct_type not in ("BUSINESS", "CREATOR"):
+        # worth failing loudly: the API accepts the token and then refuses
+        # the container, with an error that never mentions the account type
+        print("                  NOT a professional account - Instagram will "
+              "reject publishing")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_cli(sys.argv))

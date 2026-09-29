@@ -69,6 +69,7 @@ class Graph(BaseHTTPRequestHandler):
     status_after = 2          # PENDING this many times before FINISHED
     force_status = None       # set to "ERROR" to exercise the failure path
     fetch_error = None
+    account_type = "BUSINESS"   # what the `check` CLI asserts against
 
     def log_message(self, *a):
         pass
@@ -168,7 +169,8 @@ class Graph(BaseHTTPRequestHandler):
             self._reply({"id": cid, "status_code": code})
             return
         # /{ig-user-id}?fields=username,account_type
-        self._reply({"username": "akhob59", "account_type": "BUSINESS"})
+        self._reply({"username": "akhob59",
+                     "account_type": Graph.account_type})
 
 
 def start():
@@ -194,6 +196,25 @@ def main():
     check("check_account sees a professional account",
           acct.get("ok") and acct.get("account_type") == "BUSINESS", str(acct))
     print("        ->", acct)
+
+    # The README hands this command to a human, so it has to behave the way
+    # the README says it does - especially the exit code, which is the only
+    # thing anyone will look at when it runs unattended.
+    print("\n1b. python instagram.py check (the command the README hands out)")
+    code = instagram._cli(["instagram.py", "check"])
+    check("exits 0 on a healthy professional account", code == 0,
+          f"exit {code}")
+
+    Graph.account_type = "PERSONAL"
+    try:
+        code = instagram._cli(["instagram.py", "check"])
+        check("exits 1 for a personal account", code == 1, f"exit {code}")
+    finally:
+        Graph.account_type = "BUSINESS"
+
+    code = instagram._cli(["instagram.py", "bogus"])
+    check("an unknown subcommand exits 2 and prints usage", code == 2,
+          f"exit {code}")
 
     print("\n2. the gate is OPEN (so the branches below really run)")
     check("gate() returns None", instagram.gate() is None, str(instagram.gate()))
