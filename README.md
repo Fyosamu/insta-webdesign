@@ -250,12 +250,21 @@ python -m pipeline --posts=3 --reels=3      # dry run unless env says otherwise
 python test_post.py 1                        # one feed image only
 python test_reel.py 1                        # one silent card reel (fallback path)
 python make_sample.py                        # one voice reel to review
-python verify_sample.py <folder>             # gate it: no overlap, 2 rows, loudness
+python verify_sample.py <folder>             # gate it: overlap, rows, loudness, ink
 ```
 
 `make_sample.py` also writes `captions.srt` beside the video — the subtitles
 are painted into the pixels, so those timings are the only way to prove
 afterwards that no two plates shared a moment on screen.
+
+Those timings only prove the plates were *scheduled*, though, so the gate
+samples the video itself as well: frames taken from the body are looked at
+for the pure-white subtitle type, and frames from the opening for the gold
+of the hook chip. The test is deliberately one-sided. A low pixel count is
+strong evidence that nothing was drawn, a high count only weak evidence
+that something was — bright footage can look like type. So a failure here
+is a real missing overlay, while a pass means the ink was there and not
+that the frame could not have been pale.
 
 ## Scheduling
 
@@ -281,7 +290,8 @@ bot/
   make_sample.py   build one sample reel for review
   test_talk.py     guards the subtitle timing invariants (offline)
   test_publish.py  walks container -> poll -> publish against a mock Graph API
-  verify_sample.py gate a finished sample: overlap, rows, loudness, codec
+  verify_sample.py gate a finished sample: overlap, rows, loudness, codec,
+                     and whether the type is on the frame at all
 .github/workflows/
   daily-content.yml   3 posts + 3 reels, schedule commented out
   test-pipeline.yml   always-dry-run smoke test

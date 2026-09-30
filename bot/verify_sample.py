@@ -361,6 +361,99 @@ def check_files(folder, video):
     return srt, narration
 
 
+# ------------------------------------------------------------- ink ------
+# The .srt proves the plates were *scheduled*. It cannot prove they were
+# painted - the overlays are pixels, and there is no reading them back out
+# of an mp4. So sample the frame and look for the type itself.
+#
+# Deliberately one-sided. The subtitles are drawn in pure white and footage
+# rarely holds thousands of 255,255,255 pixels in one band, so a low count
+# is solid evidence that nothing was drawn; a high count is only weak
+# evidence that something was. This is therefore built to fail when the ink
+# is *missing* - a bright clip can pass unnoticed, which is a false pass
+# rather than a false alarm. Crying wolf here would make the whole gate
+# unreadable.
+INK_SUB_BAND = (0, 1460, 1080, 1860)   # plate sits at H*0.95 - plate height
+INK_HOOK_BAND = (0, 440, 1080, 780)    # hook is overlaid at H*0.24
+INK_WHITE_MIN = 2000                   # a plate is 10k+; a gap is ~0
+INK_GOLD_MIN = 5000                    # the chip is 19k+; cool footage ~0
+INK_SUB_SAMPLES = 10
+INK_HOOK_SAMPLES = 4
+INK_HOOK_END = 2.4                     # chip is on screen for ~2.8s
+INK_MIN_SUB = 0.40                     # 91% of a reel carries a plate
+INK_MIN_HOOK = 0.50
+
+
+def _ink(video, t, band, kind):
+    """Pixel count of the given colour inside `band` at time `t`, or None."""
+    import tempfile
+    from PIL import Image
+
+    d = os.path.join(tempfile.gettempdir(), "verify_ink")
+    os.makedirs(d, exist_ok=True)
+    png = os.path.join(
+        d, f"{os.path.splitext(os.path.basename(video))[0]}_{kind}_"
+           f"{t:07.2f}.png")
+    if os.path.exists(png):
+        os.remove(png)
+    subprocess.run(
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-ss",
+         f"{t:.3f}", "-i", video, "-frames:v", "1", png],
+        capture_output=True, timeout=180)
+    if not os.path.exists(png):
+        return None
+    try:
+        px = Image.open(png).convert("RGB").crop(band)
+    except Exception:
+        return None
+    if kind == "sub":
+        hit = sum(1 for r, g, b in px.getdata()
+                  if r >= 250 and g >= 250 and b >= 250)
+    else:
+        hit = sum(1 for r, g, b in px.getdata()
+                  if r > 190 and 130 < g < 235 and b < 110)
+    os.remove(png)
+    return hit
+
+
+def check_ink(video, vdur):
+    print("\nink  (is the type on the frame, not just in the timings?)")
+    if not vdur:
+        check("video readable for sampling", False, "no duration")
+        return
+
+    lo, hi = 0.6, max(0.6, vdur - 0.6)
+    sub = [lo + i * (hi - lo) / (INK_SUB_SAMPLES - 1)
+           for i in range(INK_SUB_SAMPLES)]
+    got = [c for c in (_ink(video, t, INK_SUB_BAND, "sub")
+                       for t in sub) if c is not None]
+    if not check("frames could be sampled", bool(got),
+                 f"{len(got)}/{len(sub)} frames decoded"
+                 if got else "ffmpeg produced no frames"):
+        return
+    hits = sum(1 for c in got if c >= INK_WHITE_MIN)
+    frac = hits / len(got)
+    check(f"subtitle ink on {INK_MIN_SUB:.0%}+ of sampled frames",
+          frac >= INK_MIN_SUB,
+          f"{hits}/{len(got)} frames carried >= {INK_WHITE_MIN} white px "
+          f"(min seen {min(got)}, max {max(got)})")
+
+    # first couple of seconds only, while the chip is on screen
+    hook_t = [0.4 + i * (INK_HOOK_END - 0.4) / (INK_HOOK_SAMPLES - 1)
+              for i in range(INK_HOOK_SAMPLES)]
+    gold = [c for c in (_ink(video, t, INK_HOOK_BAND, "hook")
+                        for t in hook_t) if c is not None]
+    if not gold:
+        warn("hook not sampled", "no frames in the opening window")
+        return
+    ghits = sum(1 for c in gold if c >= INK_GOLD_MIN)
+    gfrac = ghits / len(gold)
+    check(f"golden hook on {INK_MIN_HOOK:.0%}+ of the opening frames",
+          gfrac >= INK_MIN_HOOK,
+          f"{ghits}/{len(gold)} carried >= {INK_GOLD_MIN} gold px "
+          f"(min {min(gold)}, max {max(gold)})")
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
@@ -387,6 +480,7 @@ def main(argv):
         vdur = video_duration(video)
         check_subtitles(srt, vdur, os.path.basename(srt), narration)
         check_video(video, srt)
+        check_ink(video, vdur)
         if FAILURES:
             code = 1
             print(f"\n  {len(FAILURES)} FAILED, {len(WARNINGS)} warnings")
