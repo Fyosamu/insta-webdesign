@@ -57,6 +57,14 @@ jobs:
           cd bot
           python test_publish.py
 
+      # Offline, local server: a dropped connection is retried, a 404 is an
+      # answer rather than a reason to ask again, and fetch_to can tell
+      # "no source answered" from "none of them was usable".
+      - name: Media transport tests
+        run: |
+          cd bot
+          python test_images.py
+
       # Offline: quality gate over the 100k-idea bank.
       - name: Idea bank check
         run: |
