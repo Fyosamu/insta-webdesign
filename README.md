@@ -14,7 +14,7 @@ sell products* - English copy aimed at beginners.
 | step | tool | notes |
 | ---- | ---- | ----- |
 | 1. copy | Gemini (`gemini-3.8-flash`) | hook, caption, hashtags, reel script. Never repeats a hook - `state/seen.json` is committed back after every run. |
-| 2. media | Pexels API (photos + stock video) | falls back to Pollinations (free, keyless), then to Pinterest if `PINTEREST_TOKEN` is set. |
+| 2. media | Pexels API (photos + stock video) | falls back to Pollinations (free, keyless), then to Pinterest if `PINTEREST_TOKEN` is set. Every request gets three attempts first, so a dropped connection does not read as "no footage matched". |
 | 3. render | Pillow (posts) / ffmpeg (reels) | posts 1080x1350 (4:5). Reels are 1080x1920 (9:16) with a **spoken voice-over** and word-synced subtitles, 40-55 s. |
 | 4. publish | Instagram Graph API | behind a three-part safety gate. |
 | 5. state | `state/seen.json` | committed back so hooks are never reused. |
@@ -290,6 +290,7 @@ bot/
   make_sample.py   build one sample reel for review
   test_talk.py     guards the subtitle timing invariants (offline)
   test_publish.py  walks container -> poll -> publish against a mock Graph API
+  test_images.py   the transport retry, and the two ways a fetch can fail
   verify_sample.py gate a finished sample: overlap, rows, loudness, codec,
                      and whether the type is on the frame at all
 .github/workflows/

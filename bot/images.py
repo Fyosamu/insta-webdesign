@@ -7,9 +7,12 @@
 
 Every source is optional; the first one that yields a usable file wins.
 """
+import http.client
 import json
 import os
 import ssl
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -18,15 +21,50 @@ from config import PEXELS_KEY, PINTEREST_TOKEN
 _SSL = ssl.create_default_context()
 UA = {"User-Agent": "Mozilla/5.0 (compatible; insta-webdesign/1.0)"}
 
+# --- transport retry ---------------------------------------------------
+# A stock host that refuses a connection once, or drops a 29MB clip halfway
+# through, is routine. Treating that as "there is no footage for this
+# query" silently costs a whole reel, and the daily schedule never comes
+# back for the one it skipped - so the failure only surfaces as a hole in
+# the day's output. The transport therefore makes a bounded second and
+# third attempt before any caller gets to conclude that nothing matched.
+RETRY_ATTEMPTS = 3
+RETRY_DELAY = 1.5      # seconds, multiplied by the attempt number
+
 
 class ImageError(RuntimeError):
     pass
 
 
-def _get(url, headers, timeout=60):
+def _transient(exc):
+    """Is another attempt worth making?
+
+    Only transport trouble. A 404 is a settled answer, and HTTPError is a
+    subclass of URLError, so the status check has to come first or every
+    bad request would be retried into the ground.
+    """
+    if isinstance(exc, http.client.IncompleteRead):
+        return True
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in (408, 425, 429, 500, 502, 503, 504)
+    return isinstance(exc, (urllib.error.URLError, TimeoutError,
+                            ConnectionError, OSError))
+
+
+def _get(url, headers, timeout=60, attempts=RETRY_ATTEMPTS):
     req = urllib.request.Request(url, headers=dict(UA, **headers))
-    with urllib.request.urlopen(req, context=_SSL, timeout=timeout) as r:
-        return r.read()
+    last = None
+    for attempt in range(max(1, attempts)):
+        try:
+            with urllib.request.urlopen(req, context=_SSL,
+                                        timeout=timeout) as r:
+                return r.read()
+        except Exception as exc:
+            last = exc
+            if attempt + 1 >= attempts or not _transient(exc):
+                raise
+            time.sleep(RETRY_DELAY * (attempt + 1))
+    raise last
 
 
 # --------------------------------------------------------------- pinterest --
@@ -124,8 +162,16 @@ def fetch_to(query, dest, *, portrait=False, prefer_ai=False, seed=None):
             query, 720 if portrait else 1280, 1280 if portrait else 720, seed)]),
     ]
 
+    offered = 0            # candidates the sources actually put forward
     for name, fn in chains:
-        for url in fn():
+        try:
+            urls = fn() or []
+        except Exception:
+            urls = []      # one source being down must not end the chain
+        for url in urls:
+            if not url:
+                continue
+            offered += 1
             try:
                 raw = _get(url, {}, timeout=120)
             except Exception:
@@ -142,4 +188,12 @@ def fetch_to(query, dest, *, portrait=False, prefer_ai=False, seed=None):
                 os.remove(dest)
                 continue
             return name
+    # Two different endings that look identical from the outside. When no
+    # source offered anything the network or a key is at fault and retrying
+    # elsewhere will not help; when candidates were offered and none held
+    # up, the query is the problem. Saying which is the whole difference
+    # between debugging a connection and rewriting a prompt.
+    if not offered:
+        raise ImageError(f"no source answered for query: {query!r}"
+                         " - network down or key missing")
     raise ImageError(f"no image found for query: {query!r}")
