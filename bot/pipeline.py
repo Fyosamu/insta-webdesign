@@ -255,25 +255,30 @@ def make_reel(i, used, *, seed, publish=True, copy=None):
         # 1. the voice reel - stock footage, edge-tts narration, subtitles
         #    timed to the words. This is the format that was reviewed and
         #    approved; it runs as long as the narration needs, under 60s.
-        if clips:
-            try:
-                import talk
-                out = talk.build(narration, clips, out_path, workdir=work,
-                                 hook=overlay)
-                built = True
-                # _fit() may have dropped sentences to fit under a minute;
-                # the report has to say what actually aired
-                spoken = out[3]
-                if spoken and spoken != narration:
-                    copy["script"] = spoken
-                    print(f"  script : {len(spoken.split())} words "
-                          "(trimmed to fit 60s)", flush=True)
-                print(f"  voice : {talk.VOICE} @ {talk.RATE}", flush=True)
-            except Exception as e:
-                # TTS or the network can be down; a silent card reel still
-                # gives the account something to post
-                print("  voice reel failed, using the card reel:", e,
-                      flush=True)
+        #    A still comes through here as well: talk loops one for the
+        #    whole narration now, so when every clip download failed the
+        #    account gets a slower picture instead of being silently
+        #    downgraded to the silent card - which is what one missed
+        #    video used to cost.
+        try:
+            import talk
+            sources = clips if clips else [source]
+            out = talk.build(narration, sources, out_path, workdir=work,
+                             hook=overlay)
+            built = True
+            # _fit() may have dropped sentences to fit under a minute;
+            # the report has to say what actually aired
+            spoken = out[3]
+            if spoken and spoken != narration:
+                copy["script"] = spoken
+                print(f"  script : {len(spoken.split())} words "
+                      "(trimmed to fit 60s)", flush=True)
+            print(f"  voice : {talk.VOICE} @ {talk.RATE}", flush=True)
+        except Exception as e:
+            # TTS or the network can be down; a silent card reel still
+            # gives the account something to post
+            print("  voice reel failed, using the card reel:", e,
+                  flush=True)
 
         # 2. fallback - the original silent card reel
         if not built:

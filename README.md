@@ -29,6 +29,10 @@ sell products* - English copy aimed at beginners.
    keeps going, and because the container duration counts the audio nothing
    looks wrong until the streams are probed separately. `make_sample.py`
    checks the video stream against the voice for exactly this reason.
+   If every clip download fails, the still that the photo search fell back
+   to is looped for the whole narration instead: the picture gets slower,
+   but the voice and the subtitles stay. The silent card is what is left
+   only when the voice itself cannot be produced.
 2. **voice** - `edge-tts`, free and keyless. The default is
    **`en-GB-SoniaNeural`** at `-6%`, chosen from a ten-way audition
    (`bot/make_sample.py`, results in `C:\Users\USER\Desktop\insta-voices`).

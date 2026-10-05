@@ -394,6 +394,15 @@ def tighten(items, total, fps=FPS):
 
 
 # --- assembly -------------------------------------------------------------
+# Sources can be stock clips or, when every clip download failed, the still
+# that fetch_to fell back to. The two behave differently under ffmpeg.
+IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+
+
+def _is_image(path):
+    return os.path.splitext(path or "")[1].lower() in IMG_EXT
+
+
 def _prepare_source(sources, workdir, duration):
     """Chain the stock clips to a full-bleed 9:16 plate of `duration` seconds.
 
@@ -410,6 +419,27 @@ def _prepare_source(sources, workdir, duration):
     sources = [s for s in sources if s and os.path.exists(s)]
     if not sources:
         raise TalkError("no footage to build from")
+
+    # An image hands back a single frame - measured, it comes out 0.04s - so
+    # chained like a clip the picture stops the instant the reel opens
+    # while the voice keeps going, and the container counts the audio so
+    # nothing looks wrong until the streams are probed separately. Loop it
+    # for as long as the narration runs: that is what turns a failed clip
+    # download into a slow pan with the voice and subtitles intact, rather
+    # than into a reason to fall back to the silent card.
+    if all(_is_image(s) for s in sources):
+        norm = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                f"crop={W}:{H},fps={FPS},setsar=1,format=yuv420p")
+        cmd = [FFMPEG, "-y",
+               "-loop", "1", "-framerate", str(FPS),
+               "-t", f"{duration + 1.0:.3f}", "-i", sources[0],
+               "-filter_complex",
+               f"[0:v]{norm},trim=0:{duration:.3f},setpts=PTS-STARTPTS[vout]",
+               "-map", "[vout]", "-t", f"{duration:.3f}", "-r", str(FPS),
+               "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+               "-an", os.path.join(workdir, "bg.mp4")]
+        _run(cmd, timeout=900)
+        return os.path.join(workdir, "bg.mp4")
 
     # measure each clip once - the same file may be reused in the chain
     durs = {}

@@ -311,6 +311,110 @@ def test_speak_retry():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_build_from_still():
+    """A failed clip download must not cost the reel its voice.
+
+    ffmpeg hands back exactly one frame for an image - measured above, 0.04s
+    - so a still could not be used as footage, and the voice reel was only
+    ever attempted `if clips`. When every clip download failed the account
+    silently got the 20-second silent card instead of the approved format.
+    Build one end to end from a generated still and a stand-in voice, then
+    probe the streams: the picture has to last as long as the voice.
+    """
+    print("\nvoice reel built from a still (the clip-download fallback)")
+    import shutil
+    import subprocess
+    import tempfile
+    import types
+
+    from config import FFMPEG, FFPROBE
+
+    tmp = tempfile.mkdtemp(prefix="talk_still_")
+    saved = sys.modules.get("edge_tts")
+    old_delay = talk.RETRY_DELAY
+    talk.RETRY_DELAY = 0
+    try:
+        still = os.path.join(tmp, "still.jpg")
+        subprocess.run([FFMPEG, "-y", "-f", "lavfi",
+                        "-i", "color=c=0x2b3a4a:s=1080x1920",
+                        "-frames:v", "1", still],
+                       capture_output=True, timeout=180)
+        check("made a still to build from", os.path.isfile(still))
+
+        # a real 3s tone to stand in for the synthesized voice, because
+        # duration_of() and _clean_voice() both have to read it
+        real = os.path.join(tmp, "tone.mp3")
+        subprocess.run([FFMPEG, "-y", "-f", "lavfi",
+                        "-i", "sine=frequency=440:duration=3",
+                        "-c:a", "libmp3lame", "-q:a", "4", real],
+                       capture_output=True, timeout=180)
+        check("made a voice to fit it to", os.path.getsize(real) > 1000,
+              f"{os.path.getsize(real) if os.path.exists(real) else 0} bytes")
+        AUDIO = open(real, "rb").read()
+
+        class FakeCommunicate:
+            def __init__(self, text, voice, rate=None, boundary=None):
+                self.text = text
+
+            async def stream(self):
+                yield {"type": "audio", "data": AUDIO}
+                for i, w in enumerate(self.text.split()):
+                    yield {"type": "WordBoundary",
+                           "offset": int((0.15 + i * 0.30) * 1e7),
+                           "duration": int(0.28 * 1e7), "text": w}
+
+        fake = types.ModuleType("edge_tts")
+        fake.Communicate = FakeCommunicate
+        sys.modules["edge_tts"] = fake
+
+        script = "Here is a short test of the voice reel."
+        out = os.path.join(tmp, "reel.mp4")
+        try:
+            talk.build(script, [still], out, workdir=os.path.join(tmp, "w"),
+                       hook="A test hook")
+            check("built a reel from a single still", os.path.isfile(out),
+                  "no output")
+        except Exception as e:
+            check("built a reel from a single still", False, str(e))
+            return
+
+        def streams(path):
+            got = {}
+            cur = None
+            r = subprocess.run(
+                [FFPROBE, "-v", "error",
+                 "-show_entries", "stream=codec_type,duration",
+                 "-of", "default=nw=1", path],
+                capture_output=True, text=True, timeout=180)
+            for line in r.stdout.splitlines():
+                k, _, v = line.partition("=")
+                if k == "codec_type":
+                    cur = v
+                    got.setdefault(v, {})
+                elif cur:
+                    got[cur][k] = float(v)
+            return got
+
+        got = streams(out)
+        vdur = got.get("video", {}).get("duration") or 0.0
+        adur = got.get("audio", {}).get("duration") or 0.0
+        check("the picture lasts as long as the narration",
+              vdur >= 3.5, f"video {vdur:.2f}s")
+        check("it carries audio too", adur > 2.5, f"audio {adur:.2f}s")
+        check("picture does not stop before the voice",
+              abs(vdur - adur) <= 1.0,
+              f"video {vdur:.2f}s vs voice {adur:.2f}s")
+        check("not the 0.1s stub the old chain produced", vdur > 1.0,
+              f"{vdur:.2f}s")
+    finally:
+        talk.RETRY_DELAY = old_delay
+        if saved is None:
+            sys.modules.pop("edge_tts", None)
+        else:
+            sys.modules["edge_tts"] = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     print("talk.py subtitle tests  (voice=%s)" % talk.VOICE)
     test_overlap_offline()
@@ -319,6 +423,7 @@ def main():
     test_two_rows_max()
     test_fit_offline()
     test_speak_retry()
+    test_build_from_still()
     if "--live" in sys.argv:
         test_live()
         test_fit_live()
