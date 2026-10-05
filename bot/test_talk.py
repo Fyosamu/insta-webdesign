@@ -228,6 +228,89 @@ def test_two_rows_max():
           f"stub of {smallest} vs {biggest}")
 
 
+def test_speak_retry():
+    """The voice has no second source, so a dropped stream must be retried.
+
+    Images fall through Pinterest, Pexels and Pollinations; edge-tts is the
+    only way a reel gets a voice at all. `import edge_tts` happens inside
+    `speak`, so a stand-in module dropped into sys.modules is enough to
+    exercise every branch without the network or a single request.
+    """
+    print("\nvoice transport: edge-tts retry")
+    import shutil
+    import tempfile
+    import types
+
+    saved = sys.modules.get("edge_tts")
+    tmp = tempfile.mkdtemp(prefix="talk_speak_")
+    state = {"calls": 0, "fail": 2, "empty": False}
+
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate=None, boundary=None):
+            self.text = text
+            self.boundary = boundary
+
+        async def stream(self):
+            state["calls"] += 1
+            if state["calls"] <= state["fail"]:
+                raise ConnectionError("simulated drop")
+            yield {"type": "audio", "data": b"\x00" * 4000}
+            if not state["empty"]:
+                yield {"type": "WordBoundary", "offset": 0,
+                       "duration": 5_000_000, "text": "hello"}
+
+    fake = types.ModuleType("edge_tts")
+    fake.Communicate = FakeCommunicate
+    sys.modules["edge_tts"] = fake
+    old_delay = talk.RETRY_DELAY
+    talk.RETRY_DELAY = 0
+    try:
+        state.update(calls=0, fail=2, empty=False)
+        mp3, words = talk.speak("hello world", tmp, attempts=3)
+        check("a stream that drops twice still yields audio",
+              os.path.isfile(mp3) and os.path.getsize(mp3) >= 1000,
+              f"{os.path.getsize(mp3) if os.path.exists(mp3) else 0} bytes")
+        check("and the word timings with it", len(words) == 1, str(words))
+        check("took exactly three attempts", state["calls"] == 3,
+              f"{state['calls']}")
+
+        state.update(calls=0, fail=99, empty=False)
+        try:
+            talk.speak("hello world", tmp, attempts=3)
+            check("three failures raise", False, "no exception")
+        except talk.TalkError as e:
+            check("three failures raise", True)
+            check("the message names how many attempts were made",
+                  "3 attempts" in str(e), str(e))
+        check("stopped at the attempts allowed", state["calls"] == 3,
+              f"{state['calls']}")
+
+        # Audio that arrives without boundaries is the shape of the reply,
+        # not a hiccup - retrying would get the same thing back.
+        state.update(calls=0, fail=0, empty=True)
+        try:
+            talk.speak("hello world", tmp, attempts=3)
+            check("audio without word timings says so",
+                  False, "no exception")
+        except talk.TalkError as e:
+            check("audio without word timings says so",
+                  "word timings" in str(e), str(e))
+        check("a protocol problem is not retried", state["calls"] == 1,
+              f"{state['calls']} attempt(s)")
+
+        state.update(calls=0, fail=0, empty=False)
+        talk.speak("hello world", tmp, attempts=3)
+        check("a healthy first attempt is left alone", state["calls"] == 1,
+              f"{state['calls']}")
+    finally:
+        talk.RETRY_DELAY = old_delay
+        if saved is None:
+            sys.modules.pop("edge_tts", None)
+        else:
+            sys.modules["edge_tts"] = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     print("talk.py subtitle tests  (voice=%s)" % talk.VOICE)
     test_overlap_offline()
@@ -235,6 +318,7 @@ def main():
     test_plate_geometry()
     test_two_rows_max()
     test_fit_offline()
+    test_speak_retry()
     if "--live" in sys.argv:
         test_live()
         test_fit_live()

@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -38,6 +39,13 @@ VOICE = os.environ.get("REEL_VOICE", "en-GB-SoniaNeural")
 # is beginners reading a second language, so -6% buys comprehension without
 # sounding slow. REEL_RATE overrides it per run.
 RATE = os.environ.get("REEL_RATE", "-6%")
+
+# The voice is the one input with no second source: images fall through
+# Pinterest, Pexels and Pollinations, but if edge-tts drops the connection
+# the reel simply does not exist that day. Its endpoint is free and often
+# busy, so a single attempt turns a busy Tuesday into a missing post.
+RETRY_ATTEMPTS = 3
+RETRY_DELAY = 2.0
 
 W, H = 1080, 1920
 FPS = 30
@@ -101,7 +109,7 @@ def _run(cmd, timeout=900):
 
 
 # --- voice ----------------------------------------------------------------
-def speak(text, out_dir, voice=None, rate=None):
+def speak(text, out_dir, voice=None, rate=None, attempts=RETRY_ATTEMPTS):
     """Synthesize `text` and return (mp3_path, [(start, dur, word), ...])."""
     import asyncio
     import edge_tts
@@ -127,13 +135,35 @@ def speak(text, out_dir, voice=None, rate=None):
                                   chunk["text"]))
         return words
 
-    try:
-        words = asyncio.run(go())
-    except Exception as e:
-        raise TalkError(f"edge-tts failed ({type(e).__name__}: {e})") from None
-    if not os.path.exists(mp3) or os.path.getsize(mp3) < 1000:
-        raise TalkError("edge-tts produced no audio")
-    return mp3, words
+    last = None
+    audio_ok = False
+    for attempt in range(max(1, attempts)):
+        try:
+            words = asyncio.run(go())
+            last = None
+        except Exception as e:
+            last, words = e, []
+        # A stream that simply ends does the same damage as one that throws
+        # - edge-tts does both - and unchecked the reel dies much later on
+        # "no subtitle timings from the voice", where nothing is left to
+        # retry. `go` opens the file in wb, so each attempt overwrites.
+        audio_ok = os.path.exists(mp3) and os.path.getsize(mp3) >= 1000
+        if last is None and audio_ok:
+            if words:
+                return mp3, words
+            # Audio arrived, boundaries did not. That is the shape of the
+            # response rather than a hiccup, so asking again would return
+            # the same thing - say why here instead of failing downstream.
+            raise TalkError("edge-tts produced audio but no word timings, "
+                            "so the subtitles cannot be timed")
+        if attempt + 1 >= attempts:
+            break
+        time.sleep(RETRY_DELAY * (attempt + 1))
+
+    if last is not None:
+        raise TalkError(f"edge-tts failed after {attempts} attempts "
+                        f"({type(last).__name__}: {last})") from None
+    raise TalkError(f"edge-tts produced no audio after {attempts} attempts")
 
 
 def duration_of(path):

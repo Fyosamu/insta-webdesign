@@ -32,7 +32,10 @@ sell products* - English copy aimed at beginners.
 2. **voice** - `edge-tts`, free and keyless. The default is
    **`en-GB-SoniaNeural`** at `-6%`, chosen from a ten-way audition
    (`bot/make_sample.py`, results in `C:\Users\USER\Desktop\insta-voices`).
-   Override per run with `REEL_VOICE` / `REEL_RATE`.
+   Override per run with `REEL_VOICE` / `REEL_RATE`. It is the one input
+   with no second source - if the endpoint drops the stream the reel has no
+   voice at all - so a dropped or empty attempt is retried three times
+   before the reel is given up on.
 3. **subtitles** - drawn the way the other channels draw them: white bold
    text, black outline, dark rounded plate at **70 % opacity**, bottom of
    frame, geometry ported from MoneyPrinterTurbo's `create_text_clip`
