@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+state/seen.json.tmp
+out/
+bot/.key
+bot/.pexels
+*.secret.json
+gh-sample/
